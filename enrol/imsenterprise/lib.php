@@ -318,6 +318,17 @@ function process_group_tag($tagcontents){
     if(preg_match('{<description>.*?<short>(.*?)</short>.*?</description>}is', $tagcontents, $matches)){
         $group->description = trim($matches[1]);
     }
+
+    if(preg_match('{<description>.*?<long>(.*?)</long>.*?</description>}is', $tagcontents, $matches)){
+        $group->longname = trim($matches[1]);
+    }
+    if(preg_match('{<description>.*?<short>(.*?)</short>.*?</description>}is', $tagcontents, $matches)){
+        $group->shortname = trim($matches[1]);
+    }
+    if(preg_match('{<description>.*?<full>(.*?)</full>.*?</description>}is', $tagcontents, $matches)){
+        $group->full = trim($matches[1]);
+    }
+
     if(preg_match('{<org>.*?<orgunit>(.*?)</orgunit>.*?</org>}is', $tagcontents, $matches)){
         $group->category = trim($matches[1]);
     }
@@ -357,8 +368,9 @@ function process_group_tag($tagcontents){
               } else {
                 // Create the (hidden) course(s) if not found
                 $course = new stdClass();
-                $course->fullname = $group->description;
-                $course->shortname = $coursecode;
+                $course->fullname = $group->longname;
+                $course->shortname = $group->shortname;
+                $course->summary = $group->full;
                 $course->idnumber = $coursecode;
                 $course->format = 'topics';
                 $course->visible = 0;
