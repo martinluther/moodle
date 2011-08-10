@@ -97,6 +97,8 @@ function cron() {
 
         // Make sure we understand how to map the IMS-E roles to Moodle roles
         $this->load_role_mappings();
+        // Make sure we understand how to map the IMS-E course names to Moodle course names
+        $this->load_name_mappings();
 
         $md5 = md5_file($filename); // NB We'll write this value back to the database at the end of the cron
         $filemtime = filemtime($filename);
@@ -368,9 +370,9 @@ function process_group_tag($tagcontents){
               } else {
                 // Create the (hidden) course(s) if not found
                 $course = new stdClass();
-                $course->fullname = $group->longname;
-                $course->shortname = $group->shortname;
-                $course->summary = $group->full;
+                foreach ($this->namemapping as $coursename => $imsname) {
+                    $course->$coursename = $group->$imsname;
+                }
                 $course->idnumber = $coursecode;
                 $course->format = 'topics';
                 $course->visible = 0;
@@ -761,6 +763,23 @@ function load_role_mappings() {
     $this->rolemappings = array();
     foreach($imsroles as $imsrolenum=>$imsrolename) {
         $this->rolemappings[$imsrolenum] = $this->rolemappings[$imsrolename] = $this->get_config('imsrolemap' . $imsrolenum);
+    }
+}
+
+/**
+* Load the name mappings (from the config), so we can easily refer to
+* how an IMS-E course properties corresponds to a Moodle course properties 
+*/
+function load_name_mappings() {
+    require_once('locallib.php');
+
+    $imsnames = new imsenterprise_names();
+    $coursenames = $imsnames->get_coursenames();
+    $imsnames = $imsnames->get_imsnames();
+
+    $this->namemappings = array();
+    foreach($coursenames as $coursename) {
+        $this->namemappings[$coursename] = $this->get_config('imsrolemap' . $coursename);
     }
 }
 
