@@ -277,13 +277,22 @@ class pgsql_native_moodle_database extends moodle_database {
             return $this->tables;
         }
         $this->tables = array();
-        $prefix = str_replace('_', '\\\\_', $this->prefix);
-        // Get them from information_schema instead of catalog as far as
-        // we want to get only own session temp objects (catalog returns all)
-        $sql = "SELECT table_name
-                  FROM information_schema.tables
-                 WHERE table_name LIKE '$prefix%'
-                   AND table_type IN ('BASE TABLE', 'LOCAL TEMPORARY')";
+        $prefix = str_replace('_', '|_', $this->prefix);
+        if ($this->is_min_version('9.1')) {
+            // Use ANSI standard information_schema in recent versions where it is fast enough.
+            $sql = "SELECT table_name
+                      FROM information_schema.tables
+                     WHERE table_name LIKE '$prefix%' ESCAPE '|'
+                       AND table_type IN ('BASE TABLE', 'LOCAL TEMPORARY')";
+        } else {
+            // information_schema is horribly slow in <= 9.0, so use pg internals.
+            // Note the pg_is_other_temp_schema. We only want temp objects from our own session.
+            $sql = "SELECT c.relname
+                      FROM pg_class c
+                     WHERE c.relname LIKE '$prefix%' ESCAPE '|'
+                       AND c.relkind = 'r'
+                       AND NOT pg_is_other_temp_schema(c.relnamespace)";
+        }
         $this->query_start($sql, null, SQL_QUERY_AUX);
         $result = pg_query($this->pgsql, $sql);
         $this->query_end($result);
@@ -415,7 +424,7 @@ class pgsql_native_moodle_database extends moodle_database {
                 $info->scale         = null;
                 $info->not_null      = ($rawcolumn->attnotnull === 't');
                 if ($info->has_default) {
-                    $info->default_value = $rawcolumn->adsrc;
+                    $info->default_value = trim($rawcolumn->adsrc, '()');
                 } else {
                     $info->default_value = null;
                 }
@@ -433,7 +442,7 @@ class pgsql_native_moodle_database extends moodle_database {
                 $info->not_null      = ($rawcolumn->attnotnull === 't');
                 $info->has_default   = ($rawcolumn->atthasdef === 't');
                 if ($info->has_default) {
-                    $info->default_value = $rawcolumn->adsrc;
+                    $info->default_value = trim($rawcolumn->adsrc, '()');
                 } else {
                     $info->default_value = null;
                 }
@@ -451,7 +460,7 @@ class pgsql_native_moodle_database extends moodle_database {
                 $info->not_null      = ($rawcolumn->attnotnull === 't');
                 $info->has_default   = ($rawcolumn->atthasdef === 't');
                 if ($info->has_default) {
-                    $info->default_value = $rawcolumn->adsrc;
+                    $info->default_value = trim($rawcolumn->adsrc, '()');
                 } else {
                     $info->default_value = null;
                 }
@@ -578,7 +587,7 @@ class pgsql_native_moodle_database extends moodle_database {
 
     /**
      * Execute general sql query. Should be used only when no other method suitable.
-     * Do NOT use this to make changes in db structure, use database_manager::execute_sql() instead!
+     * Do NOT use this to make changes in db structure, use database_manager methods instead!
      * @param string $sql query
      * @param array $params query parameters
      * @return bool true
@@ -1153,7 +1162,13 @@ class pgsql_native_moodle_database extends moodle_database {
         return true;
     }
 
-    public function get_session_lock($rowid) {
+    /**
+     * Obtain session lock
+     * @param int $rowid id of the row with session record
+     * @param int $timeout max allowed time to wait for the lock in seconds
+     * @return bool success
+     */
+    public function get_session_lock($rowid, $timeout) {
         // NOTE: there is a potential locking problem for database running
         //       multiple instances of moodle, we could try to use pg_advisory_lock(int, int),
         //       luckily there is not a big chance that they would collide
@@ -1161,8 +1176,39 @@ class pgsql_native_moodle_database extends moodle_database {
             return;
         }
 
-        parent::get_session_lock($rowid);
+        parent::get_session_lock($rowid, $timeout);
+
+        $timeoutmilli = $timeout * 1000;
+
+        $sql = "SET statement_timeout TO $timeoutmilli";
+        $this->query_start($sql, null, SQL_QUERY_AUX);
+        $result = pg_query($this->pgsql, $sql);
+        $this->query_end($result);
+
+        if ($result) {
+            pg_free_result($result);
+        }
+
         $sql = "SELECT pg_advisory_lock($rowid)";
+        $this->query_start($sql, null, SQL_QUERY_AUX);
+        $start = time();
+        $result = pg_query($this->pgsql, $sql);
+        $end = time();
+        try {
+            $this->query_end($result);
+        } catch (dml_exception $ex) {
+            if ($end - $start >= $timeout) {
+                throw new dml_sessionwait_exception();
+            } else {
+                throw $ex;
+            }
+        }
+
+        if ($result) {
+            pg_free_result($result);
+        }
+
+        $sql = "SET statement_timeout TO DEFAULT";
         $this->query_start($sql, null, SQL_QUERY_AUX);
         $result = pg_query($this->pgsql, $sql);
         $this->query_end($result);

@@ -32,6 +32,7 @@ $string['availablefrom_help'] = 'Access from/to dates determine when students ca
 The difference between access from/to dates and availability settings for the activity is that outside the set dates the latter allows students to view the activity description, whereas access from/to dates prevent access completely.';
 $string['availableuntil'] = 'Allow access until';
 $string['badavailabledates'] = 'Invalid dates. If you set both dates, the \'Allow access from\' date should be before the \'until\' date.';
+$string['badgradelimits'] = 'If you set both an upper and lower grade limit, the upper limit must be higher than the lower limit.';
 $string['completion_complete'] = 'must be marked complete';
 $string['completioncondition'] = 'Activity completion condition';
 $string['completioncondition_help'] = 'This setting determines any activity completion conditions which must be met in order to access the activity. Note that completion tracking must first be set before an activity completion condition can be set.
@@ -40,7 +41,7 @@ Multiple activity completion conditions may be set if desired.  If so, access to
 $string['completion_fail'] = 'must be complete with fail grade';
 $string['completion_incomplete'] = 'must not be marked complete';
 $string['completion_pass'] = 'must be complete with pass grade';
-$string['configenableavailability'] = 'When enabled, this lets you set conditions (based on date, grade, or completion) that control whether an activity can be accessed.';
+$string['configenableavailability'] = 'When enabled, this lets you set conditions (based on date, grade, or completion) that control whether an activity or resource can be accessed.';
 $string['enableavailability'] = 'Enable conditional access';
 $string['grade_atleast'] = 'must be at least';
 $string['gradecondition'] = 'Grade condition';
@@ -48,6 +49,9 @@ $string['gradecondition_help'] = 'This setting determines any grade conditions w
 
 Multiple grade conditions may be set if desired. If so, the activity will only allow access when ALL grade conditions are met.';
 $string['grade_upto'] = 'and less than';
+$string['gradeitembutnolimits'] = 'You must enter an upper or lower limit, or both.';
+$string['gradelimitsbutnoitem'] = 'You must choose a grade item.';
+$string['gradesmustbenumeric'] = 'The minimum and maximum grades must be numeric (or blank).';
 $string['none'] = '(none)';
 $string['notavailableyet'] = 'Not available yet';
 $string['requires_completion_0'] = 'Not available unless the activity <strong>{$a}</strong> is incomplete.';

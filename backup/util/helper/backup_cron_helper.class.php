@@ -123,14 +123,24 @@ abstract class backup_cron_automated_helper {
                     $backupcourse = $DB->get_record('backup_courses', array('courseid'=>$course->id));
                 }
 
+                // Skip courses that do not yet need backup
+                $skipped = !(($backupcourse->nextstarttime >= 0 && $backupcourse->nextstarttime < $now) || $rundirective == self::RUN_IMMEDIATELY);
                 // Skip backup of unavailable courses that have remained unmodified in a month
-                $skipped = false;
-                if (empty($course->visible) && ($now - $course->timemodified) > 31*24*60*60) {  //Hidden + unmodified last month
-                    $backupcourse->laststatus = backup_cron_automated_helper::BACKUP_STATUS_SKIPPED;
-                    $DB->update_record('backup_courses', $backupcourse);
-                    mtrace('Skipping unchanged course '.$course->fullname);
-                    $skipped = true;
-                } else if (($backupcourse->nextstarttime >= 0 && $backupcourse->nextstarttime < $now) || $rundirective == self::RUN_IMMEDIATELY) {
+                if (!$skipped && empty($course->visible) && ($now - $course->timemodified) > 31*24*60*60) {  //Hidden + settings were unmodified last month
+                    //Check log if there were any modifications to the course content
+                    $sqlwhere = "course=:courseid AND time>:time AND ". $DB->sql_like('action', ':action', false, true, true);
+                    $params = array('courseid' => $course->id, 'time' => $now-31*24*60*60, 'action' => '%view%');
+                    $logexists = $DB->record_exists_select('log', $sqlwhere, $params);
+                    if (!$logexists) {
+                        $backupcourse->laststatus = backup_cron_automated_helper::BACKUP_STATUS_SKIPPED;
+                        $backupcourse->nextstarttime = $nextstarttime;
+                        $DB->update_record('backup_courses', $backupcourse);
+                        mtrace('Skipping unchanged course '.$course->fullname);
+                        $skipped = true;
+                    }
+                }
+                //Now we backup every non-skipped course
+                if (!$skipped) {
                     mtrace('Backing up '.$course->fullname, '...');
 
                     //We have to send a email because we have included at least one backup
@@ -197,7 +207,7 @@ abstract class backup_cron_automated_helper {
 
             //Build the message subject
             $site = get_site();
-            $prefix = $site->shortname.": ";
+            $prefix = format_string($site->shortname, true, array('context' => get_context_instance(CONTEXT_COURSE, SITEID))).": ";
             if ($haserrors) {
                 $prefix .= "[".strtoupper(get_string('error'))."] ";
             }
@@ -271,23 +281,25 @@ abstract class backup_cron_automated_helper {
         $midnight = usergetmidnight($now, $timezone);
         $date = usergetdate($now, $timezone);
 
-        //Get number of days (from today) to execute backups
-        $automateddays = substr($config->backup_auto_weekdays,$date['wday']) . $config->backup_auto_weekdays;
-        $daysfromtoday = strpos($automateddays, "1");
+        // Get number of days (from today) to execute backups
+        $automateddays = substr($config->backup_auto_weekdays, $date['wday']) . $config->backup_auto_weekdays;
+        $daysfromtoday = strpos($automateddays, "1", 1);
+
+        // If we can't find the next day, we set it to tomorrow
         if (empty($daysfromtoday)) {
             $daysfromtoday = 1;
         }
 
-        //If some day has been found
+        // If some day has been found
         if ($daysfromtoday !== false) {
-            //Calculate distance
-            $dist = ($daysfromtoday * 86400) +                //Days distance
-                    ($config->backup_auto_hour * 3600) +      //Hours distance
-                    ($config->backup_auto_minute * 60);       //Minutes distance
+            // Calculate distance
+            $dist = ($daysfromtoday * 86400) +                // Days distance
+                    ($config->backup_auto_hour * 3600) +      // Hours distance
+                    ($config->backup_auto_minute * 60);       // Minutes distance
             $result = $midnight + $dist;
         }
 
-        //If that time is past, call the function recursively to obtain the next valid day
+        // If that time is past, call the function recursively to obtain the next valid day
         if ($result > 0 && $result < time()) {
             $result = self::calculate_next_automated_backup($timezone, $result);
         }
@@ -305,6 +317,7 @@ abstract class backup_cron_automated_helper {
      */
     public static function launch_automated_backup($course, $starttime, $userid) {
 
+        $outcome = true;
         $config = get_config('backup');
         $bc = new backup_controller(backup::TYPE_1COURSE, $course->id, backup::FORMAT_MOODLE, backup::INTERACTIVE_NO, backup::MODE_AUTOMATED, $userid);
 
@@ -312,8 +325,7 @@ abstract class backup_cron_automated_helper {
 
             $settings = array(
                 'users' => 'backup_auto_users',
-                'role_assignments' => 'backup_auto_users',
-                'user_files' => 'backup_auto_user_files',
+                'role_assignments' => 'backup_auto_role_assignments',
                 'activities' => 'backup_auto_activities',
                 'blocks' => 'backup_auto_blocks',
                 'filters' => 'backup_auto_filters',
@@ -338,32 +350,33 @@ abstract class backup_cron_automated_helper {
 
             $bc->set_status(backup::STATUS_AWAITING);
 
-            $outcome = $bc->execute_plan();
+            $bc->execute_plan();
             $results = $bc->get_results();
-            $file = $results['backup_destination'];
+            $file = $results['backup_destination']; // may be empty if file already moved to target location
             $dir = $config->backup_auto_destination;
             $storage = (int)$config->backup_auto_storage;
             if (!file_exists($dir) || !is_dir($dir) || !is_writable($dir)) {
                 $dir = null;
             }
-            if (!empty($dir) && $storage !== 0) {
-                $filename = backup_plan_dbops::get_default_backup_filename($format, $type, $course->id, $users, $anonymised, true);
+            if ($file && !empty($dir) && $storage !== 0) {
+                $filename = backup_plan_dbops::get_default_backup_filename($format, $type, $course->id, $users, $anonymised, !$config->backup_shortname);
                 $outcome = $file->copy_content_to($dir.'/'.$filename);
                 if ($outcome && $storage === 1) {
                     $file->delete();
                 }
             }
 
-            $outcome = true;
-        } catch (backup_exception $e) {
-            $bc->log('backup_auto_failed_on_course', backup::LOG_WARNING, $course->shortname);
+        } catch (moodle_exception $e) {
+            $bc->log('backup_auto_failed_on_course', backup::LOG_ERROR, $course->shortname); // Log error header.
+            $bc->log('Exception: ' . $e->errorcode, backup::LOG_ERROR, $e->a, 1); // Log original exception problem.
+            $bc->log('Debug: ' . $e->debuginfo, backup::LOG_DEBUG, null, 1); // Log original debug information.
             $outcome = false;
         }
 
         $bc->destroy();
         unset($bc);
 
-        return true;
+        return $outcome;
     }
 
     /**
@@ -449,6 +462,11 @@ abstract class backup_cron_automated_helper {
         $keep =     (int)$config->backup_auto_keep;
         $storage =  $config->backup_auto_storage;
         $dir =      $config->backup_auto_destination;
+
+        if ($keep == 0) {
+            // means keep all backup files
+            return true;
+        }
 
         $backupword = str_replace(' ', '_', moodle_strtolower(get_string('backupfilename')));
         $backupword = trim(clean_filename($backupword), '_');

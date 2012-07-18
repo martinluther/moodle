@@ -55,14 +55,15 @@ require_once($CFG->dirroot . '/question/category_class.php');
  */
 function module_specific_buttons($cmid, $cmoptions) {
     global $OUTPUT;
+    $params = array(
+        'type' => 'submit',
+        'name' => 'add',
+        'value' => $OUTPUT->larrow() . ' ' . get_string('addtoquiz', 'quiz'),
+    );
     if ($cmoptions->hasattempts) {
-        $disabled = 'disabled="disabled" ';
-    } else {
-        $disabled = '';
+        $params['disabled'] = 'disabled';
     }
-    $out = '<input type="submit" name="add" value="' . $OUTPUT->larrow() . ' ' .
-            get_string('addtoquiz', 'quiz') . '" ' . $disabled . "/>\n";
-    return $out;
+    return html_writer::empty_tag('input', $params);
 }
 
 /**
@@ -137,7 +138,9 @@ if ($quiz_reordertool > -1) {
     $quiz_reordertool = get_user_preferences('quiz_reordertab', 0);
 }
 
-//will be set further down in the code
+$canaddrandom = $contexts->have_cap('moodle/question:useall');
+$canaddquestion = (bool) $contexts->having_add_and_use();
+
 $quizhasattempts = quiz_has_attempts($quiz->id);
 
 $PAGE->set_url($thispageurl);
@@ -211,6 +214,7 @@ if (optional_param('repaginate', false, PARAM_BOOL) && confirm_sesskey()) {
 
 if (($addquestion = optional_param('addquestion', 0, PARAM_INT)) && confirm_sesskey()) {
     // Add a single question to the current quiz
+    quiz_require_question_use($addquestion);
     $addonpage = optional_param('addonpage', 0, PARAM_INT);
     quiz_add_quiz_question($addquestion, $quiz, $addonpage);
     quiz_delete_previews($quiz);
@@ -225,6 +229,7 @@ if (optional_param('add', false, PARAM_BOOL) && confirm_sesskey()) {
     foreach ($rawdata as $key => $value) { // Parse input for question ids
         if (preg_match('!^q([0-9]+)$!', $key, $matches)) {
             $key = $matches[1];
+            quiz_require_question_use($key);
             quiz_add_quiz_question($key, $quiz);
         }
     }
@@ -273,17 +278,23 @@ if (($deleteemptypage !== false) && confirm_sesskey()) {
 }
 
 $remove = optional_param('remove', false, PARAM_INT);
-if (($remove = optional_param('remove', false, PARAM_INT)) && confirm_sesskey()) {
+if ($remove && confirm_sesskey()) {
+    // Remove a question from the quiz.
+    // We require the user to have the 'use' capability on the question,
+    // so that then can add it back if they remove the wrong one by mistake.
+    quiz_require_question_use($remove);
     quiz_remove_question($quiz, $remove);
-    quiz_update_sumgrades($quiz);
     quiz_delete_previews($quiz);
+    quiz_update_sumgrades($quiz);
     redirect($afteractionurl);
 }
 
 if (optional_param('quizdeleteselected', false, PARAM_BOOL) &&
         !empty($selectedquestionids) && confirm_sesskey()) {
     foreach ($selectedquestionids as $questionid) {
-        quiz_remove_question($quiz, $questionid);
+        if (quiz_has_question_use($questionid)) {
+            quiz_remove_question($quiz, $questionid);
+        }
     }
     quiz_delete_previews($quiz);
     quiz_update_sumgrades($quiz);
@@ -307,7 +318,7 @@ if (optional_param('savechanges', false, PARAM_BOOL) && confirm_sesskey()) {
         if (preg_match('!^g([0-9]+)$!', $key, $matches)) {
             // Parse input for question -> grades
             $questionid = $matches[1];
-            $quiz->grades[$questionid] = clean_param($value, PARAM_FLOAT);
+            $quiz->grades[$questionid] = unformat_float($value);
             quiz_update_question_instance($quiz->grades[$questionid], $questionid, $quiz);
             $deletepreviews = true;
             $recomputesummarks = true;
@@ -356,17 +367,25 @@ if (optional_param('savechanges', false, PARAM_BOOL) && confirm_sesskey()) {
         //move to the end of the selected page
         $pagebreakpositions = array_keys($questions, 0);
         $numpages = count($pagebreakpositions);
+
         // Ensure the target page number is in range.
-        $moveselectedonpage = max(1, min($moveselectedonpage, $pagebreakpositions));
+        for ($i = $moveselectedonpage; $i > $numpages; $i--) {
+            $questions[] = 0;
+            $pagebreakpositions[] = count($questions) - 1;
+        }
         $moveselectedpos = $pagebreakpositions[$moveselectedonpage - 1];
+
+        // Do the move.
         array_splice($questions, $moveselectedpos, 0, $selectedquestionids);
         $quiz->questions = implode(',', $questions);
+
+        // Update the database.
         $DB->set_field('quiz', 'questions', $quiz->questions, array('id' => $quiz->id));
         $deletepreviews = true;
     }
 
-    // If rescaling is required save the new maximum
-    $maxgrade = optional_param('maxgrade', -1, PARAM_FLOAT);
+    // If rescaling is required save the new maximum.
+    $maxgrade = unformat_float(optional_param('maxgrade', -1, PARAM_RAW));
     if ($maxgrade >= 0) {
         quiz_set_grade($maxgrade, $quiz);
     }
@@ -453,10 +472,9 @@ echo '<div id="module" class="module">';
 echo '<div class="bd">';
 $questionbank->display('editq',
         $pagevars['qpage'],
-        $pagevars['qperpage'], $pagevars['qsortorder'],
-        $pagevars['qsortorderdecoded'],
+        $pagevars['qperpage'],
         $pagevars['cat'], $pagevars['recurse'], $pagevars['showhidden'],
-        $pagevars['showquestiontext']);
+        $pagevars['qbshowtext']);
 echo '</div>';
 echo '</div>';
 echo '</div>';
@@ -489,9 +507,7 @@ if ($quiz_reordertool) {
 quiz_print_status_bar($quiz);
 
 $tabindex = 0;
-if (!$quiz_reordertool) {
-    quiz_print_grading_form($quiz, $thispageurl, $tabindex);
-}
+quiz_print_grading_form($quiz, $thispageurl, $tabindex);
 
 $notifystrings = array();
 if ($quizhasattempts) {
@@ -543,14 +559,14 @@ if ($quiz_reordertool) {
     echo '<div class="editq">';
 }
 
-quiz_print_question_list($quiz, $thispageurl, true,
-        $quiz_reordertool, $quiz_qbanktool, $quizhasattempts, $defaultcategoryobj);
+quiz_print_question_list($quiz, $thispageurl, true, $quiz_reordertool, $quiz_qbanktool,
+        $quizhasattempts, $defaultcategoryobj, $canaddquestion, $canaddrandom);
 echo '</div>';
 
 // Close <div class="quizcontents">:
 echo '</div>';
 
-if (!$quiz_reordertool) {
+if (!$quiz_reordertool && $canaddrandom) {
     $randomform = new quiz_add_random_form(new moodle_url('/mod/quiz/addrandom.php'), $contexts);
     $randomform->set_data(array(
         'category' => $pagevars['cat'],

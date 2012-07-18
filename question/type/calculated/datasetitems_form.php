@@ -26,6 +26,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->dirroot . '/question/type/edit_question_form.php');
+
 
 /**
  * Calculated question data set items editing form definition.
@@ -33,7 +35,7 @@ defined('MOODLE_INTERNAL') || die();
  * @copyright  2007 Jamie Pratt me@jamiep.org
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-class question_dataset_dependent_items_form extends moodleform {
+class question_dataset_dependent_items_form extends question_wizard_form {
     /**
      * Question object with options and answers already loaded by get_question_options
      * Be careful how you use this it is needed sometimes to set up the structure of the
@@ -131,7 +133,7 @@ class question_dataset_dependent_items_form extends moodleform {
         $j = (($this->noofitems) * count($this->datasetdefs))+1;
         foreach ($this->datasetdefs as $defkey => $datasetdef) {
             if ($datasetdef->category |= 0 ) {
-                $name = get_string('sharedwildcardname', 'qtype_calculated', $datasetdef->name);
+                $name = get_string('sharedwildcard', 'qtype_calculated', $datasetdef->name);
             } else {
                 $name = get_string('wildcard', 'qtype_calculated', $datasetdef->name);
             }
@@ -283,7 +285,7 @@ class question_dataset_dependent_items_form extends moodleform {
                                 get_string('wildcard', 'qtype_calculated', $datasetdef->name));
                     } else {
                         $mform->addElement('text', "number[$j]", get_string(
-                                'sharedwildcardname', 'qtype_calculated', $datasetdef->name));
+                                'sharedwildcard', 'qtype_calculated', $datasetdef->name));
                     }
 
                 } else {
@@ -331,28 +333,14 @@ class question_dataset_dependent_items_form extends moodleform {
             $mform->addElement('submit', 'savechanges', get_string('savechanges'));
             $mform->closeHeaderBefore('savechanges');
         }
-        //hidden elements
-        $mform->addElement('hidden', 'id');
-        $mform->setType('id', PARAM_INT);
 
-        $mform->addElement('hidden', 'courseid');
-        $mform->setType('courseid', PARAM_INT);
-        $mform->setDefault('courseid', 0);
+        $this->add_hidden_fields();
 
         $mform->addElement('hidden', 'category');
-        $mform->setType('category', PARAM_RAW);
-        $mform->setDefault('category', array('contexts' => array($this->categorycontext)));
-
-        $mform->addElement('hidden', 'cmid');
-        $mform->setType('cmid', PARAM_INT);
-        $mform->setDefault('cmid', 0);
+        $mform->setType('category', PARAM_SEQUENCE);
 
         $mform->addElement('hidden', 'wizard', 'datasetitems');
         $mform->setType('wizard', PARAM_ALPHA);
-
-        $mform->addElement('hidden', 'returnurl');
-        $mform->setType('returnurl', PARAM_LOCALURL);
-        $mform->setDefault('returnurl', 0);
     }
 
     public function set_data($question) {

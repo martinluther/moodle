@@ -206,21 +206,25 @@ class restore_gradebook_structure_step extends restore_structure_step {
         global $DB;
 
         $data = (object)$data;
-        $oldid = $data->id;
+        $olduserid = $data->userid;
 
         $data->itemid = $this->get_new_parentid('grade_item');
 
-        $data->userid = $this->get_mappingid('user', $data->userid, NULL);
-        $data->usermodified = $this->get_mappingid('user', $data->usermodified, NULL);
-        $data->locktime     = $this->apply_date_offset($data->locktime);
-        // TODO: Ask, all the rest of locktime/exported... work with time... to be rolled?
-        $data->overridden = $this->apply_date_offset($data->overridden);
-        $data->timecreated  = $this->apply_date_offset($data->timecreated);
-        $data->timemodified = $this->apply_date_offset($data->timemodified);
+        $data->userid = $this->get_mappingid('user', $data->userid, null);
+        if (!empty($data->userid)) {
+            $data->usermodified = $this->get_mappingid('user', $data->usermodified, null);
+            $data->locktime     = $this->apply_date_offset($data->locktime);
+            // TODO: Ask, all the rest of locktime/exported... work with time... to be rolled?
+            $data->overridden = $this->apply_date_offset($data->overridden);
+            $data->timecreated  = $this->apply_date_offset($data->timecreated);
+            $data->timemodified = $this->apply_date_offset($data->timemodified);
 
-        $newitemid = $DB->insert_record('grade_grades', $data);
-        //$this->set_mapping('grade_grade', $oldid, $newitemid);
+            $newitemid = $DB->insert_record('grade_grades', $data);
+        } else {
+            debugging("Mapped user id not found for user id '{$olduserid}', grade item id '{$data->itemid}'");
+        }
     }
+
     protected function process_grade_category($data) {
         global $DB;
 
@@ -371,40 +375,35 @@ class restore_gradebook_structure_step extends restore_structure_step {
         }
         $rs->close();
 
-        //need to correct the grade category path and parent
+        // Need to correct the grade category path and parent
         $conditions = array(
             'courseid' => $this->get_courseid()
         );
-        $grade_category = new stdclass();
 
         $rs = $DB->get_recordset('grade_categories', $conditions);
-        if (!empty($rs)) {
-            //get all the parents correct first as grade_category::build_path() loads category parents from the DB
-            foreach($rs as $gc) {
-                if (!empty($gc->parent)) {
-                    $grade_category->id = $gc->id;
-                    $grade_category->parent = $this->get_mappingid('grade_category', $gc->parent);
-                    $DB->update_record('grade_categories', $grade_category);
-                }
-            }
-        }
-        if (isset($grade_category->parent)) {
-            unset($grade_category->parent);
-        }
-        $rs->close();
-
-        $rs = $DB->get_recordset('grade_categories', $conditions);
-        if (!empty($rs)) {
-            //now we can rebuild all the paths
-            foreach($rs as $gc) {
+        // Get all the parents correct first as grade_category::build_path() loads category parents from the DB
+        foreach ($rs as $gc) {
+            if (!empty($gc->parent)) {
+                $grade_category = new stdClass();
                 $grade_category->id = $gc->id;
-                $grade_category->path = grade_category::build_path($gc);
+                $grade_category->parent = $this->get_mappingid('grade_category', $gc->parent);
                 $DB->update_record('grade_categories', $grade_category);
             }
         }
         $rs->close();
 
-        //Restore marks items as needing update. Update everything now.
+        // Now we can rebuild all the paths
+        $rs = $DB->get_recordset('grade_categories', $conditions);
+        foreach ($rs as $gc) {
+            $grade_category = new stdClass();
+            $grade_category->id = $gc->id;
+            $grade_category->path = grade_category::build_path($gc);
+            $grade_category->depth = substr_count($grade_category->path, '/') - 1;
+            $DB->update_record('grade_categories', $grade_category);
+        }
+        $rs->close();
+
+        // Restore marks items as needing update. Update everything now.
         grade_regrade_final_grades($this->get_courseid());
     }
 }
@@ -688,7 +687,7 @@ class restore_create_included_users extends restore_execution_step {
 
     protected function define_execution() {
 
-        restore_dbops::create_included_users($this->get_basepath(), $this->get_restoreid(), $this->get_setting_value('user_files'), $this->task->get_userid());
+        restore_dbops::create_included_users($this->get_basepath(), $this->get_restoreid(), $this->task->get_userid());
     }
 }
 
@@ -802,7 +801,14 @@ class restore_groups_structure_step extends restore_structure_step {
 
         $data->groupingid = $this->get_new_parentid('grouping'); // Use new parentid
         $data->groupid    = $this->get_mappingid('group', $data->groupid); // Get from mappings
-        $DB->insert_record('groupings_groups', $data);  // No need to set this mapping (no child info nor files)
+
+        $params = array();
+        $params['groupingid'] = $data->groupingid;
+        $params['groupid']    = $data->groupid;
+
+        if (!$DB->record_exists('groupings_groups', $params)) {
+            $DB->insert_record('groupings_groups', $data);  // No need to set this mapping (no child info nor files)
+        }
     }
 
     protected function after_execute() {
@@ -1021,7 +1027,7 @@ class restore_section_structure_step extends restore_structure_step {
         // Section exists, update non-empty information
         } else {
             $section->id = $secrec->id;
-            if (empty($secrec->name)) {
+            if ((string)$secrec->name === '') {
                 $section->name = $data->name;
             }
             if (empty($secrec->summary)) {
@@ -1099,7 +1105,6 @@ class restore_course_structure_step extends restore_structure_step {
         global $CFG, $DB;
 
         $data = (object)$data;
-        $oldid = $data->id; // We'll need this later
 
         $fullname  = $this->get_setting_value('course_fullname');
         $shortname = $this->get_setting_value('course_shortname');
@@ -1112,7 +1117,19 @@ class restore_course_structure_step extends restore_structure_step {
         $data->id = $this->get_courseid();
         $data->fullname = $fullname;
         $data->shortname= $shortname;
-        $data->idnumber = '';
+
+        $context = get_context_instance_by_id($this->task->get_contextid());
+        if (has_capability('moodle/course:changeidnumber', $context, $this->task->get_userid())) {
+            $data->idnumber = '';
+        } else {
+            unset($data->idnumber);
+        }
+
+        // Any empty value for course->hiddensections will lead to 0 (default, show collapsed).
+        // It has been reported that some old 1.9 courses may have it null leading to DB error. MDL-31532
+        if (empty($data->hiddensections)) {
+            $data->hiddensections = 0;
+        }
 
         // Only restrict modules if original course was and target site too for new courses
         $data->restrictmodules = $data->restrictmodules && !empty($CFG->restrictmodulesfor) && $CFG->restrictmodulesfor == 'all';
@@ -1290,6 +1307,28 @@ class restore_ras_and_caps_structure_step extends restore_structure_step {
  * enrolments, performing all the mappings and/or movements required
  */
 class restore_enrolments_structure_step extends restore_structure_step {
+
+    /**
+     * Conditionally decide if this step should be executed.
+     *
+     * This function checks the following parameter:
+     *
+     *   1. the course/enrolments.xml file exists
+     *
+     * @return bool true is safe to execute, false otherwise
+     */
+    protected function execute_condition() {
+
+        // Check it is included in the backup
+        $fullpath = $this->task->get_taskbasepath();
+        $fullpath = rtrim($fullpath, '/') . '/' . $this->filename;
+        if (!file_exists($fullpath)) {
+            // Not found, can't restore enrolments info
+            return false;
+        }
+
+        return true;
+    }
 
     protected function define_structure() {
 
@@ -1474,6 +1513,76 @@ class restore_comments_structure_step extends restore_structure_step {
                 }
             }
         }
+    }
+}
+
+/**
+ * This structure steps restores the calendar events
+ */
+class restore_calendarevents_structure_step extends restore_structure_step {
+
+    protected function define_structure() {
+
+        $paths = array();
+
+        $paths[] = new restore_path_element('calendarevents', '/events/event');
+
+        return $paths;
+    }
+
+    public function process_calendarevents($data) {
+        global $DB;
+
+        $data = (object)$data;
+        $oldid = $data->id;
+        $restorefiles = true; // We'll restore the files
+        // Find the userid and the groupid associated with the event. Return if not found.
+        $data->userid = $this->get_mappingid('user', $data->userid);
+        if ($data->userid === false) {
+            return;
+        }
+        if (!empty($data->groupid)) {
+            $data->groupid = $this->get_mappingid('group', $data->groupid);
+            if ($data->groupid === false) {
+                return;
+            }
+        }
+
+        $params = array(
+                'name'           => $data->name,
+                'description'    => $data->description,
+                'format'         => $data->format,
+                'courseid'       => $this->get_courseid(),
+                'groupid'        => $data->groupid,
+                'userid'         => $data->userid,
+                'repeatid'       => $data->repeatid,
+                'modulename'     => $data->modulename,
+                'eventtype'      => $data->eventtype,
+                'timestart'      => $this->apply_date_offset($data->timestart),
+                'timeduration'   => $data->timeduration,
+                'visible'        => $data->visible,
+                'uuid'           => $data->uuid,
+                'sequence'       => $data->sequence,
+                'timemodified'    => $this->apply_date_offset($data->timemodified));
+        if ($this->name == 'activity_calendar') {
+            $params['instance'] = $this->task->get_activityid();
+        } else {
+            $params['instance'] = 0;
+        }
+        $sql = 'SELECT id FROM {event} WHERE name = ? AND courseid = ? AND
+                repeatid = ? AND modulename = ? AND timestart = ? AND timeduration =?
+                AND ' . $DB->sql_compare_text('description', 255) . ' = ' . $DB->sql_compare_text('?', 255);
+        $arg = array ($params['name'], $params['courseid'], $params['repeatid'], $params['modulename'], $params['timestart'], $params['timeduration'], $params['description']);
+        $result = $DB->record_exists_sql($sql, $arg);
+        if (empty($result)) {
+            $newitemid = $DB->insert_record('event', $params);
+            $this->set_mapping('event_description', $oldid, $newitemid, $restorefiles);
+        }
+
+    }
+    protected function after_execute() {
+        // Add related files
+        $this->add_related_files('calendar', 'event_description', 'event_description');
     }
 }
 
@@ -1717,15 +1826,20 @@ class restore_course_completion_structure_step extends restore_structure_step {
 
         $data->course = $this->get_courseid();
 
-        $params = array(
-            'course' => $data->course,
-            'criteriatype' => $data->criteriatype,
-            'method' => $data->method,
-            'value' => $data->value,
-        );
-        $DB->insert_record('course_completion_aggr_methd', $params);
+        // Only create the course_completion_aggr_methd records if
+        // the target course has not them defined. MDL-28180
+        if (!$DB->record_exists('course_completion_aggr_methd', array(
+                    'course' => $data->course,
+                    'criteriatype' => $data->criteriatype))) {
+            $params = array(
+                'course' => $data->course,
+                'criteriatype' => $data->criteriatype,
+                'method' => $data->method,
+                'value' => $data->value,
+            );
+            $DB->insert_record('course_completion_aggr_methd', $params);
+        }
     }
-
 }
 
 
@@ -1749,7 +1863,7 @@ class restore_course_logs_structure_step extends restore_structure_step {
     /**
      * Conditionally decide if this step should be executed.
      *
-     * This function checks the following four parameters:
+     * This function checks the following parameter:
      *
      *   1. the course/logs.xml file exists
      *
@@ -1930,18 +2044,24 @@ class restore_activity_grades_structure_step extends restore_structure_step {
 
     protected function process_grade_grade($data) {
         $data = (object)($data);
-
+        $olduserid = $data->userid;
         unset($data->id);
-        $data->itemid = $this->get_new_parentid('grade_item');
-        $data->userid = $this->get_mappingid('user', $data->userid);
-        $data->usermodified = $this->get_mappingid('user', $data->usermodified);
-        $data->rawscaleid = $this->get_mappingid('scale', $data->rawscaleid);
-        // TODO: Ask, all the rest of locktime/exported... work with time... to be rolled?
-        $data->overridden = $this->apply_date_offset($data->overridden);
 
-        $grade = new grade_grade($data, false);
-        $grade->insert('restore');
-        // no need to save any grade_grade mapping
+        $data->itemid = $this->get_new_parentid('grade_item');
+
+        $data->userid = $this->get_mappingid('user', $data->userid, null);
+        if (!empty($data->userid)) {
+            $data->usermodified = $this->get_mappingid('user', $data->usermodified, null);
+            $data->rawscaleid = $this->get_mappingid('scale', $data->rawscaleid);
+            // TODO: Ask, all the rest of locktime/exported... work with time... to be rolled?
+            $data->overridden = $this->apply_date_offset($data->overridden);
+
+            $grade = new grade_grade($data, false);
+            $grade->insert('restore');
+            // no need to save any grade_grade mapping
+        } else {
+            debugging("Mapped user id not found for user id '{$olduserid}', grade item id '{$data->itemid}'");
+        }
     }
 
     /**
@@ -2203,8 +2323,6 @@ class restore_module_structure_step extends restore_structure_step {
  *  - Activity includes completion info (file_exists)
  */
 class restore_userscompletion_structure_step extends restore_structure_step {
-    private $done = array();
-
     /**
      * To conditionally decide if this step must be executed
      * Note the "settings" conditions are evaluated in the
@@ -2248,15 +2366,14 @@ class restore_userscompletion_structure_step extends restore_structure_step {
         $data->userid = $this->get_mappingid('user', $data->userid);
         $data->timemodified = $this->apply_date_offset($data->timemodified);
 
+        // Find the existing record
+        $existing = $DB->get_record('course_modules_completion', array(
+                'coursemoduleid' => $data->coursemoduleid,
+                'userid' => $data->userid), 'id, timemodified');
         // Check we didn't already insert one for this cmid and userid
         // (there aren't supposed to be duplicates in that field, but
         // it was possible until MDL-28021 was fixed).
-        $key = $data->coursemoduleid . ',' . $data->userid;
-        if (array_key_exists($key, $this->done)) {
-            // Find the existing record
-            $existing = $DB->get_record('course_modules_completion', array(
-                    'coursemoduleid' => $data->coursemoduleid,
-                    'userid' => $data->userid), 'id, timemodified');
+        if ($existing) {
             // Update it to these new values, but only if the time is newer
             if ($existing->timemodified < $data->timemodified) {
                 $data->id = $existing->id;
@@ -2265,16 +2382,7 @@ class restore_userscompletion_structure_step extends restore_structure_step {
         } else {
             // Normal entry where it doesn't exist already
             $DB->insert_record('course_modules_completion', $data);
-            // Remember this entry
-            $this->done[$key] = true;
         }
-    }
-
-    protected function after_execute() {
-        // This gets called once per activity (according to my testing).
-        // Clearing the array isn't strictly required, but avoids using
-        // unnecessary memory.
-        $this->done = array();
     }
 }
 
@@ -2637,6 +2745,12 @@ class restore_create_question_files extends restore_execution_step {
                                               $oldctxid, $this->task->get_userid(), 'question_answer', null, $newctxid, true);
             restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'hint',
                                               $oldctxid, $this->task->get_userid(), 'question_hint', null, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'correctfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'partiallycorrectfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'incorrectfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
             // Add qtype dependent files
             $components = backup_qtype_plugin::get_components_and_fileareas($question->qtype);
             foreach ($components as $component => $fileareas) {

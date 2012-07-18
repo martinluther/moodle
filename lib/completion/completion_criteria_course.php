@@ -129,7 +129,9 @@ class completion_criteria_course extends completion_criteria {
         global $DB;
 
         $prereq = $DB->get_record('course', array('id' => $this->courseinstance));
-        return shorten_text(urldecode($prereq->fullname));
+        $coursecontext = get_context_instance(CONTEXT_COURSE, $prereq->id, MUST_EXIST);
+        $fullname = format_string($prereq->fullname, true, array('context' => $coursecontext));
+        return shorten_text(urldecode($fullname));
     }
 
     /**
@@ -187,7 +189,7 @@ class completion_criteria_course extends completion_criteria {
         // Loop through completions, and mark as complete
         $rs = $DB->get_recordset_sql($sql);
         foreach ($rs as $record) {
-            $completion = new completion_criteria_completion((array)$record);
+            $completion = new completion_criteria_completion((array) $record, DATA_OBJECT_FETCH_BY_KEY);
             $completion->mark_complete($record->timecompleted);
         }
         $rs->close();
@@ -208,11 +210,14 @@ class completion_criteria_course extends completion_criteria {
         $info = new completion_info($course);
 
         $prereq = $DB->get_record('course', array('id' => $this->courseinstance));
+        $coursecontext = get_context_instance(CONTEXT_COURSE, $prereq->id, MUST_EXIST);
+        $fullname = format_string($prereq->fullname, true, array('context' => $coursecontext));
+
         $prereq_info = new completion_info($prereq);
 
         $details = array();
         $details['type'] = $this->get_title();
-        $details['criteria'] = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$this->courseinstance.'">'.s($prereq->fullname).'</a>';
+        $details['criteria'] = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$this->courseinstance.'">'.s($fullname).'</a>';
         $details['requirement'] = get_string('coursecompleted', 'completion');
         $details['status'] = '<a href="'.$CFG->wwwroot.'/blocks/completionstatus/details.php?course='.$this->courseinstance.'">'.get_string('seedetails', 'completion').'</a>';
 

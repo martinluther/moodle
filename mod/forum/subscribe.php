@@ -62,7 +62,7 @@ if ($user) {
     if (!has_capability('mod/forum:managesubscriptions', $context)) {
         print_error('nopermissiontosubscribe', 'forum');
     }
-    $user = $DB->get_record('user', array('id' => $user), MUST_EXIST);
+    $user = $DB->get_record('user', array('id' => $user), '*', MUST_EXIST);
 } else {
     $user = $USER;
 }
@@ -127,6 +127,7 @@ if (forum_is_forcesubscribed($forum)) {
     redirect($returnto, get_string("everyoneisnowsubscribed", "forum"), 1);
 }
 
+$info = new stdClass();
 $info->name  = fullname($user);
 $info->forum = format_string($forum->name);
 

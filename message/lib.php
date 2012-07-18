@@ -487,10 +487,11 @@ function message_print_usergroup_selector($viewing, $courses, $coursecontexts, $
         foreach($courses as $course) {
             if (has_capability('moodle/course:viewparticipants', $coursecontexts[$course->id])) {
                 //Not using short_text() as we want the end of the course name. Not the beginning.
-                if ($textlib->strlen($course->shortname) > MESSAGE_MAX_COURSE_NAME_LENGTH) {
-                    $courses_options[MESSAGE_VIEW_COURSE.$course->id] = '...'.$textlib->substr($course->shortname, -MESSAGE_MAX_COURSE_NAME_LENGTH);
+                $shortname = format_string($course->shortname, true, array('context' => $coursecontexts[$course->id]));
+                if ($textlib->strlen($shortname) > MESSAGE_MAX_COURSE_NAME_LENGTH) {
+                    $courses_options[MESSAGE_VIEW_COURSE.$course->id] = '...'.$textlib->substr($shortname, -MESSAGE_MAX_COURSE_NAME_LENGTH);
                 } else {
-                    $courses_options[MESSAGE_VIEW_COURSE.$course->id] = $course->shortname;
+                    $courses_options[MESSAGE_VIEW_COURSE.$course->id] = $shortname;
                 }
             }
         }
@@ -813,6 +814,12 @@ function message_print_recent_conversations($user=null, $showicontext=false) {
 
     $conversations = message_get_recent_conversations($user);
 
+    // Attach context url information to create the "View this conversation" type links
+    foreach($conversations as $conversation) {
+        $conversation->contexturl = new moodle_url("/message/index.php?user2={$conversation->id}");
+        $conversation->contexturlname = get_string('thisconversation', 'message');
+    }
+
     $showotheruser = true;
     message_print_recent_messages_table($conversations, $user, $showotheruser, $showicontext);
 }
@@ -945,7 +952,7 @@ function message_add_contact($contactid, $blocked=0) {
 
     } else {
     /// new contact record
-        unset($contact);
+        $contact = new stdClass();
         $contact->userid = $USER->id;
         $contact->contactid = $contactid;
         $contact->blocked = $blocked;
@@ -1341,6 +1348,7 @@ function message_contact_link($userid, $linktype='add', $return=false, $script=n
     }
 
     if (empty($str->blockcontact)) {
+       $str = new stdClass();
        $str->blockcontact   =  get_string('blockcontact', 'message');
        $str->unblockcontact =  get_string('unblockcontact', 'message');
        $str->removecontact  =  get_string('removecontact', 'message');
@@ -1500,7 +1508,7 @@ function message_search_users($courseid, $searchtext, $sort='', $exceptions='') 
 
         // everyone who has a role assignment in this course or higher
         $params = array($USER->id, "%$searchtext%");
-        $users = $DB->get_records_sql("SELECT $ufields, mc.id as contactlistid, mc.blocked
+        $users = $DB->get_records_sql("SELECT DISTINCT $ufields, mc.id as contactlistid, mc.blocked
                                          FROM {user} u
                                          JOIN {role_assignments} ra ON ra.userid = u.id
                                          LEFT JOIN {message_contacts} mc
@@ -1530,6 +1538,11 @@ function message_search($searchterms, $fromme=true, $tome=true, $courseid='none'
 /// eg   word  +word -word
 ///
     global $CFG, $USER, $DB;
+
+    // If user is searching all messages check they are allowed to before doing anything else
+    if ($courseid == SITEID && !has_capability('moodle/site:readallmessages', get_context_instance(CONTEXT_SYSTEM))) {
+        print_error('accessdenied','admin');
+    }
 
     /// If no userid sent then assume current user
     if ($userid == 0) $userid = $USER->id;
@@ -1644,7 +1657,7 @@ function message_search($searchterms, $fromme=true, $tome=true, $courseid='none'
 
     /// The keys may be duplicated in $m_read and $m_unread so we can't
     /// do a simple concatenation
-    $message = array();
+    $messages = array();
     foreach ($m_read as $m) {
         $messages[] = $m;
     }
@@ -1944,9 +1957,15 @@ function message_format_message($message, $format='', $keywords='', $class='othe
 
     //if supplied display small messages as fullmessage may contain boilerplate text that shouldnt appear in the messaging UI
     if (!empty($message->smallmessage)) {
-        $messagetext = format_text(s($message->smallmessage), FORMAT_MOODLE, $options);
+        $messagetext = $message->smallmessage;
     } else {
-        $messagetext = format_text(s($message->fullmessage), $message->fullmessageformat, $options);
+        $messagetext = $message->fullmessage;
+    }
+    if ($message->fullmessageformat == FORMAT_HTML) {
+        //dont escape html tags by calling s() if html format or they will display in the UI
+        $messagetext = html_to_text(format_text($messagetext, $message->fullmessageformat, $options));
+    } else {
+        $messagetext = format_text(s($messagetext), $message->fullmessageformat, $options);
     }
 
     $messagetext .= message_format_contexturl($message);
@@ -2004,8 +2023,10 @@ function message_post_message($userfrom, $userto, $message, $format) {
     $eventdata->subject          = get_string_manager()->get_string('unreadnewmessage', 'message', fullname($userfrom), $userto->lang);
 
     if ($format == FORMAT_HTML) {
-        $eventdata->fullmessage      = '';
         $eventdata->fullmessagehtml  = $message;
+        //some message processors may revert to sending plain text even if html is supplied
+        //so we keep both plain and html versions if we're intending to send html
+        $eventdata->fullmessage = html_to_text($eventdata->fullmessagehtml);
     } else {
         $eventdata->fullmessage      = $message;
         $eventdata->fullmessagehtml  = '';
@@ -2015,7 +2036,7 @@ function message_post_message($userfrom, $userto, $message, $format) {
     $eventdata->smallmessage     = $message;//store the message unfiltered. Clean up on output.
 
     $s = new stdClass();
-    $s->sitename = $SITE->shortname;
+    $s->sitename = format_string($SITE->shortname, true, array('context' => get_context_instance(CONTEXT_COURSE, SITEID)));
     $s->url = $CFG->wwwroot.'/message/index.php?user='.$userto->id.'&id='.$userfrom->id;
 
     $emailtagline = get_string_manager()->get_string('emailtagline', 'message', $s, $userto->lang);
@@ -2302,16 +2323,40 @@ function get_message_processors($ready = false) {
 }
 
 /**
+ * Get an instance of the message_output class for one of the output plugins.
+ * @param string $type the message output type. E.g. 'email' or 'jabber'.
+ * @return message_output message_output the requested class.
+ */
+function get_message_processor($type) {
+    global $CFG;
+
+    // Note, we cannot use the get_message_processors function here, becaues this
+    // code is called during install after installing each messaging plugin, and
+    // get_message_processors caches the list of installed plugins.
+
+    $processorfile = $CFG->dirroot . "/message/output/{$type}/message_output_{$type}.php";
+    if (!is_readable($processorfile)) {
+        throw new coding_exception('Unknown message processor type ' . $type);
+    }
+
+    include_once($processorfile);
+
+    $processclass = 'message_output_' . $type;
+    if (!class_exists($processclass)) {
+        throw new coding_exception('Message processor ' . $type .
+                ' does not define the right class');
+    }
+
+    return new $processclass();
+}
+
+/**
  * Get messaging outputs default (site) preferences
  *
  * @return object $processors object containing information on message processors
  */
 function get_message_output_default_preferences() {
-    $preferences = get_config('message');
-    if (!$preferences) {
-        $preferences = new stdClass();
-    }
-    return $preferences;
+    return get_config('message');
 }
 
 /**
@@ -2338,15 +2383,12 @@ function translate_message_default_setting($plugindefault, $processorname) {
     );
 
     // define the default setting
-    if ($processorname == 'email') {
-        $default = MESSAGE_PERMITTED + MESSAGE_DEFAULT_LOGGEDIN + MESSAGE_DEFAULT_LOGGEDOFF;
-    } else {
-        $default = MESSAGE_PERMITTED;
-    }
+    $processor = get_message_processor($processorname);
+    $default = $processor->get_default_messaging_settings();
 
     // Validate the value. It should not exceed the maximum size
     if (!is_int($plugindefault) || ($plugindefault > 0x0f)) {
-        $OUTPUT->notification(get_string('errortranslatingdefault', 'message'), 'notifyproblem');
+        debugging(get_string('errortranslatingdefault', 'message'));
         $plugindefault = $default;
     }
     // Use plugin default setting of 'permitted' is 0
@@ -2373,4 +2415,26 @@ function translate_message_default_setting($plugindefault, $processorname) {
  */
 function message_page_type_list($pagetype, $parentcontext, $currentcontext) {
     return array('messages-*'=>get_string('page-message-x', 'message'));
+}
+
+/**
+ * Is $USER one of the supplied users?
+ *
+ * $user2 will be null if viewing a user's recent conversations
+ *
+ * @param stdClass the first user
+ * @param stdClass the second user or null
+ * @return bool True if the current user is one of either $user1 or $user2
+ */
+function message_current_user_is_involved($user1, $user2) {
+    global $USER;
+
+    if (empty($user1->id) || (!empty($user2) && empty($user2->id))) {
+        throw new coding_exception('Invalid user object detected. Missing id.');
+    }
+
+    if ($user1->id != $USER->id && (empty($user2) || $user2->id != $USER->id)) {
+        return false;
+    }
+    return true;
 }

@@ -14,10 +14,9 @@ function glossary_show_entry_entrylist($course, $cm, $glossary, $entry, $mode=''
 
         $anchortagcontents = glossary_print_entry_concept($entry, true);
 
-        $link = "/mod/glossary/showentry.php?courseid={$course->id}&eid={$entry->id}&displayformat=dictionary";
-        $action = new popup_action('click', $link.'&popup=1', 'entry',array('title'=>'entry','width'=>600,'height'=>450));
-
-        $anchor = $OUTPUT->action_link($link, $anchortagcontents, $action);
+        $link = new moodle_url('/mod/glossary/showentry.php', array('courseid' => $course->id,
+                'eid' => $entry->id, 'displayformat' => 'dictionary'));
+        $anchor = html_writer::link($link, $anchortagcontents);
 
         echo "<div class=\"concept\">$anchor</div> ";
         echo '</td><td align="right" class="entrylowersection">';
@@ -43,25 +42,25 @@ function glossary_show_entry_entrylist($course, $cm, $glossary, $entry, $mode=''
 }
 
 function glossary_print_entry_entrylist($course, $cm, $glossary, $entry, $mode='', $hook='', $printicons=1) {
-
-    //The print view for this format is different from the normal view, so we implement it here completely
-    global $CFG, $USER;
-
-
     //Take out autolinking in definitions un print view
+    // TODO use <nolink> tags MDL-15555.
     $entry->definition = '<span class="nolink">'.$entry->definition.'</span>';
 
-    echo '<table class="glossarypost entrylist">';
-    echo '<tr valign="top">';
-    echo '<td class="entry">';
-    echo '<b>';
+    echo html_writer::start_tag('table', array('class' => 'glossarypost entrylist mod-glossary-entrylist'));
+    echo html_writer::start_tag('tr');
+    echo html_writer::start_tag('td', array('class' => 'entry mod-glossary-entry'));
+    echo html_writer::start_tag('div', array('class' => 'mod-glossary-concept'));
     glossary_print_entry_concept($entry);
-    echo ':</b> ';
+    echo html_writer::end_tag('div');
+    echo html_writer::start_tag('div', array('class' => 'mod-glossary-definition'));
     glossary_print_entry_definition($entry, $glossary, $cm);
+    echo html_writer::end_tag('div');
+    echo html_writer::start_tag('div', array('class' => 'mod-glossary-lower-section'));
     glossary_print_entry_lower_section($course, $cm, $glossary, $entry, $mode, $hook, false, false);
-    echo '</td>';
-    echo '</tr>';
-    echo "</table>\n";
+    echo html_writer::end_tag('div');
+    echo html_writer::end_tag('td');
+    echo html_writer::end_tag('tr');
+    echo html_writer::end_tag('table');
 }
 
 

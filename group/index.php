@@ -155,7 +155,7 @@ if (ajaxenabled()) {
     $deletegroup_disabled = '';
 }
 
-echo $OUTPUT->heading(format_string($course->shortname) .' '.$strgroups, 3);
+echo $OUTPUT->heading(format_string($course->shortname, true, array('context' => $context)) .' '.$strgroups, 3);
 echo '<form id="groupeditform" action="index.php" method="post">'."\n";
 echo '<div>'."\n";
 echo '<input type="hidden" name="id" value="' . $courseid . '" />'."\n";
@@ -205,7 +205,7 @@ echo '<p><input type="submit" name="act_updatemembers" id="updatemembers" value=
         . get_string('showmembersforgroup', 'group') . '" /></p>'."\n";
 echo '<p><input type="submit" '. $showeditgroupsettingsform_disabled . ' name="act_showgroupsettingsform" id="showeditgroupsettingsform" value="'
         . get_string('editgroupsettings', 'group') . '" /></p>'."\n";
-echo '<p><input type="submit" '. $deletegroup_disabled . ' name="act_deletegroup" onclick="onDeleteGroup()" id="deletegroup" value="'
+echo '<p><input type="submit" '. $deletegroup_disabled . ' name="act_deletegroup" id="deletegroup" value="'
         . get_string('deleteselectedgroup', 'group') . '" /></p>'."\n";
 
 echo '<p><input type="submit" name="act_showcreateorphangroupform" id="showcreateorphangroupform" value="'

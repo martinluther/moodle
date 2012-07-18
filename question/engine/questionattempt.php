@@ -160,6 +160,15 @@ class question_attempt {
         }
     }
 
+    /**
+     * This method exists so that {@link question_attempt_with_restricted_history}
+     * can override it. You should not normally need to call it.
+     * @return question_attempt return ourself.
+     */
+    public function get_full_qa() {
+        return $this;
+    }
+
     /** @return question_definition the question this is an attempt at. */
     public function get_question() {
         return $this->question;
@@ -178,7 +187,7 @@ class question_attempt {
      * For internal use only.
      * @param int $slot
      */
-    public function set_number_in_usage($slot) {
+    public function set_slot($slot) {
         $this->slot = $slot;
     }
 
@@ -202,6 +211,15 @@ class question_attempt {
      */
     public function set_database_id($id) {
         $this->id = $id;
+    }
+
+    /**
+     * You should almost certainly not call this method from your code. It is for
+     * internal use only.
+     * @param question_usage_observer that should be used to tracking changes made to this qa.
+     */
+    public function set_observer($observer) {
+        $this->observer = $observer;
     }
 
     /** @return int|string the id of the {@link question_usage_by_activity} we belong to. */
@@ -400,6 +418,21 @@ class question_attempt {
     public function get_last_step_with_qt_var($name) {
         foreach ($this->get_reverse_step_iterator() as $step) {
             if ($step->has_qt_var($name)) {
+                return $step;
+            }
+        }
+        return new question_attempt_step_read_only();
+    }
+
+    /**
+     * Get the last step with a particular behaviour variable set.
+     * @param string $name the name of the variable to get.
+     * @return question_attempt_step the last step, or a step with no variables
+     * if there was not a real step.
+     */
+    public function get_last_step_with_behaviour_var($name) {
+        foreach ($this->get_reverse_step_iterator() as $step) {
+            if ($step->has_behaviour_var($name)) {
                 return $step;
             }
         }
@@ -778,9 +811,11 @@ class question_attempt {
      * @param array $submitteddata optional, used when re-starting to keep the same initial state.
      * @param int $timestamp optional, the timstamp to record for this action. Defaults to now.
      * @param int $userid optional, the user to attribute this action to. Defaults to the current user.
+     * @param int $existingstepid optional, if this step is going to replace an existing step
+     *      (for example, during a regrade) this is the id of the previous step we are replacing.
      */
     public function start($preferredbehaviour, $variant, $submitteddata = array(),
-            $timestamp = null, $userid = null) {
+            $timestamp = null, $userid = null, $existingstepid = null) {
 
         // Initialise the behaviour.
         $this->variant = $variant;
@@ -796,7 +831,7 @@ class question_attempt {
         $this->minfraction = $this->behaviour->get_min_fraction();
 
         // Initialise the first step.
-        $firststep = new question_attempt_step($submitteddata, $timestamp, $userid);
+        $firststep = new question_attempt_step($submitteddata, $timestamp, $userid, $existingstepid);
         $firststep->set_state(question_state::$todo);
         if ($submitteddata) {
             $this->question->apply_attempt_state($firststep);
@@ -849,10 +884,10 @@ class question_attempt {
             case self::PARAM_MARK:
                 // Special case to work around PARAM_NUMBER converting '' to 0.
                 $mark = $this->get_submitted_var($name, PARAM_RAW_TRIMMED, $postdata);
-                if ($mark === '') {
+                if ($mark === '' || is_null($mark)) {
                     return $mark;
                 } else {
-                    return $this->get_submitted_var($name, PARAM_NUMBER, $postdata);
+                    return clean_param(str_replace(',', '.', $mark), PARAM_NUMBER);
                 }
 
             case self::PARAM_FILES:
@@ -963,11 +998,15 @@ class question_attempt {
 
     /**
      * Get a set of response data for this question attempt that would get the
-     * best possible mark.
-     * @return array name => value pairs that could be passed to {@link process_action()}.
+     * best possible mark. If it is not possible to compute a correct
+     * response, this method should return null.
+     * @return array|null name => value pairs that could be passed to {@link process_action()}.
      */
     public function get_correct_response() {
         $response = $this->question->get_correct_response();
+        if (is_null($response)) {
+            return null;
+        }
         $imvars = $this->behaviour->get_correct_response();
         foreach ($imvars as $name => $value) {
             $response['-' . $name] = $value;
@@ -1013,8 +1052,8 @@ class question_attempt {
      * @param int $timestamp the time to record for the action. (If not given, use now.)
      * @param int $userid the user to attribute the aciton to. (If not given, use the current user.)
      */
-    public function process_action($submitteddata, $timestamp = null, $userid = null) {
-        $pendingstep = new question_attempt_pending_step($submitteddata, $timestamp, $userid);
+    public function process_action($submitteddata, $timestamp = null, $userid = null, $existingstepid = null) {
+        $pendingstep = new question_attempt_pending_step($submitteddata, $timestamp, $userid, $existingstepid);
         if ($this->behaviour->process_action($pendingstep) == self::KEEP) {
             $this->add_step($pendingstep);
             if ($pendingstep->response_summary_changed()) {
@@ -1046,15 +1085,33 @@ class question_attempt {
     public function regrade(question_attempt $oldqa, $finished) {
         $first = true;
         foreach ($oldqa->get_step_iterator() as $step) {
+            $this->observer->notify_step_deleted($step, $this);
+
             if ($first) {
+                // First step of the attempt.
                 $first = false;
                 $this->start($oldqa->behaviour, $oldqa->get_variant(), $step->get_all_data(),
-                        $step->get_timecreated(), $step->get_user_id());
+                        $step->get_timecreated(), $step->get_user_id(), $step->get_id());
+
+            } else if ($step->has_behaviour_var('finish') && count($step->get_submitted_data()) > 1) {
+                // This case relates to MDL-32062. The upgrade code from 2.0
+                // generates attempts where the final submit of the question
+                // data, and the finish action, are in the same step. The system
+                // cannot cope with that, so convert the single old step into
+                // two new steps.
+                $submitteddata = $step->get_submitted_data();
+                unset($submitteddata['-finish']);
+                $this->process_action($submitteddata,
+                        $step->get_timecreated(), $step->get_user_id(), $step->get_id());
+                $this->finish($step->get_timecreated(), $step->get_user_id());
+
             } else {
+                // This is the normal case. Replay the next step of the attempt.
                 $this->process_action($step->get_submitted_data(),
-                        $step->get_timecreated(), $step->get_user_id());
+                        $step->get_timecreated(), $step->get_user_id(), $step->get_id());
             }
         }
+
         if ($finished) {
             $this->finish();
         }
@@ -1119,7 +1176,7 @@ class question_attempt {
      *
      * @param Iterator $records Raw records loaded from the database.
      * @param int $questionattemptid The id of the question_attempt to extract.
-     * @return question_attempt The newly constructed question_attempt_step.
+     * @return question_attempt The newly constructed question_attempt.
      */
     public static function load_from_records($records, $questionattemptid,
             question_usage_observer $observer, $preferredbehaviour) {
@@ -1144,7 +1201,7 @@ class question_attempt {
         $qa = new question_attempt($question, $record->questionusageid,
                 null, $record->maxmark + 0);
         $qa->set_database_id($record->questionattemptid);
-        $qa->set_number_in_usage($record->slot);
+        $qa->set_slot($record->slot);
         $qa->variant = $record->variant + 0;
         $qa->minfraction = $record->minfraction + 0;
         $qa->set_flagged($record->flagged);
@@ -1200,29 +1257,34 @@ class question_attempt_with_restricted_history extends question_attempt {
      *      annoyting that this needs to be passed, but unavoidable for now.
      */
     public function __construct(question_attempt $baseqa, $lastseq, $preferredbehaviour) {
-        if ($lastseq < 0 || $lastseq >= $baseqa->get_num_steps()) {
-            throw new coding_exception('$seq out of range', $seq);
+        $this->baseqa = $baseqa->get_full_qa();
+
+        if ($lastseq < 0 || $lastseq >= $this->baseqa->get_num_steps()) {
+            throw new coding_exception('$lastseq out of range', $lastseq);
         }
 
-        $this->baseqa = $baseqa;
-        $this->steps = array_slice($baseqa->steps, 0, $lastseq + 1);
+        $this->steps = array_slice($this->baseqa->steps, 0, $lastseq + 1);
         $this->observer = new question_usage_null_observer();
 
         // This should be a straight copy of all the remaining fields.
-        $this->id = $baseqa->id;
-        $this->usageid = $baseqa->usageid;
-        $this->slot = $baseqa->slot;
-        $this->question = $baseqa->question;
-        $this->maxmark = $baseqa->maxmark;
-        $this->minfraction = $baseqa->minfraction;
-        $this->questionsummary = $baseqa->questionsummary;
-        $this->responsesummary = $baseqa->responsesummary;
-        $this->rightanswer = $baseqa->rightanswer;
-        $this->flagged = $baseqa->flagged;
+        $this->id = $this->baseqa->id;
+        $this->usageid = $this->baseqa->usageid;
+        $this->slot = $this->baseqa->slot;
+        $this->question = $this->baseqa->question;
+        $this->maxmark = $this->baseqa->maxmark;
+        $this->minfraction = $this->baseqa->minfraction;
+        $this->questionsummary = $this->baseqa->questionsummary;
+        $this->responsesummary = $this->baseqa->responsesummary;
+        $this->rightanswer = $this->baseqa->rightanswer;
+        $this->flagged = $this->baseqa->flagged;
 
         // Except behaviour, where we need to create a new one.
         $this->behaviour = question_engine::make_behaviour(
-                $baseqa->get_behaviour_name(), $this, $preferredbehaviour);
+                $this->baseqa->get_behaviour_name(), $this, $preferredbehaviour);
+    }
+
+    public function get_full_qa() {
+        return $this->baseqa;
     }
 
     public function get_full_step_iterator() {
@@ -1245,7 +1307,7 @@ class question_attempt_with_restricted_history extends question_attempt {
     public function set_flagged($flagged) {
         coding_exception('Cannot modify a question_attempt_with_restricted_history.');
     }
-    public function set_number_in_usage($slot) {
+    public function set_slot($slot) {
         coding_exception('Cannot modify a question_attempt_with_restricted_history.');
     }
     public function set_question_summary($questionsummary) {

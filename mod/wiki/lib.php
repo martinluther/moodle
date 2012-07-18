@@ -246,8 +246,6 @@ function wiki_supports($feature) {
         return true;
     case FEATURE_COMPLETION_TRACKS_VIEWS:
         return true;
-    case FEATURE_COMPLETION_HAS_RULES:
-        return true;
     case FEATURE_GRADE_HAS_GRADE:
         return false;
     case FEATURE_GRADE_OUTCOMES:
@@ -483,7 +481,7 @@ function wiki_search_form($cm, $search = '') {
     $output .= '<input name="courseid" type="hidden" value="' . $cm->course . '" />';
     $output .= '<input name="cmid" type="hidden" value="' . $cm->id . '" />';
     $output .= '<input name="searchwikicontent" type="hidden" value="1" />';
-    $output .= ' <input value="' . get_string('searchwikis', 'wiki') . '" type="submit" />';
+    $output .= '<input value="' . get_string('searchwikis', 'wiki') . '" type="submit" />';
     $output .= '</fieldset>';
     $output .= '</form>';
     $output .= '</div>';
@@ -558,6 +556,11 @@ function wiki_extend_navigation(navigation_node $navref, $course, $module, $cm) 
         if (has_capability('mod/wiki:viewpage', $context)) {
             $link = new moodle_url('/mod/wiki/files.php', array('pageid' => $pageid));
             $node = $navref->add(get_string('files', 'wiki'), $link, navigation_node::TYPE_SETTING);
+        }
+
+        if (has_capability('mod/wiki:managewiki', $context)) {
+            $link = new moodle_url('/mod/wiki/admin.php', array('pageid' => $pageid));
+            $node = $navref->add(get_string('admin', 'wiki'), $link, navigation_node::TYPE_SETTING);
         }
     }
 }

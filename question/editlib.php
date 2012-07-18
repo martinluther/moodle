@@ -54,15 +54,11 @@ function get_module_from_cmid($cmid) {
 * @param bool $noparent if true only questions with NO parent will be selected
 * @param bool $recurse include subdirectories
 * @param bool $export set true if this is called by questionbank export
-* @author added by Howard Miller June 2004
 */
 function get_questions_category( $category, $noparent=false, $recurse=true, $export=true ) {
     global $DB;
 
-    // questions will be added to an array
-    $qresults = array();
-
-    // build sql bit for $noparent
+    // Build sql bit for $noparent
     $npsql = '';
     if ($noparent) {
       $npsql = " and parent='0' ";
@@ -75,16 +71,21 @@ function get_questions_category( $category, $noparent=false, $recurse=true, $exp
         $categorylist = array($category->id);
     }
 
-    // get the list of questions for the category
+    // Get the list of questions for the category
     list($usql, $params) = $DB->get_in_or_equal($categorylist);
-    if ($questions = $DB->get_records_select('question', "category $usql $npsql", $params, 'qtype, name')) {
+    $questions = $DB->get_records_select('question', "category $usql $npsql", $params, 'qtype, name');
 
-        // iterate through questions, getting stuff we need
-        foreach($questions as $question) {
-            $question->export_process = $export;
-            question_bank::get_qtype($question->qtype)->get_question_options($question);
-            $qresults[] = $question;
+    // Iterate through questions, getting stuff we need
+    $qresults = array();
+    foreach($questions as $key => $question) {
+        $question->export_process = $export;
+        $qtype = question_bank::get_qtype($question->qtype, false);
+        if ($export && $qtype->name() == 'missingtype') {
+            // Unrecognised question type. Skip this question when exporting.
+            continue;
         }
+        $qtype->get_question_options($question);
+        $qresults[] = $question;
     }
 
     return $qresults;
@@ -155,7 +156,6 @@ abstract class question_bank_column_base {
 
     /**
      * Output the column header cell.
-     * @param int $currentsort 0 for none. 1 for normal sort, -1 for reverse sort.
      */
     public function display_header() {
         echo '<th class="header ' . $this->get_classes() . '" scope="col">';
@@ -407,6 +407,7 @@ class question_bank_checkbox_column extends question_bank_column_base {
         echo '<input title="' . $this->strselect . '" type="checkbox" name="q' .
                 $question->id . '" id="checkq' . $question->id . '" value="1"/>';
         if ($this->firstrow) {
+            $PAGE->requires->js('/question/qbank.js');
             $PAGE->requires->js_function_call('question_bank.init_checkbox_column', array(get_string('selectall'),
                     get_string('deselectall'), 'checkq' . $question->id));
             $this->firstrow = false;
@@ -606,7 +607,8 @@ abstract class question_bank_action_column_base extends question_bank_column_bas
     }
 
     public function get_required_fields() {
-        return array('q.id');
+        // createdby is required for permission checks.
+        return array('q.id', 'q.createdby');
     }
 }
 
@@ -632,10 +634,9 @@ class question_bank_edit_action_column extends question_bank_action_column_base 
     }
 
     protected function display_content($question, $rowclasses) {
-        if (question_has_capability_on($question, 'edit') ||
-                question_has_capability_on($question, 'move')) {
+        if (question_has_capability_on($question, 'edit')) {
             $this->print_icon('t/edit', $this->stredit, $this->qbank->edit_question_url($question->id));
-        } else {
+        } else if (question_has_capability_on($question, 'view')) {
             $this->print_icon('i/info', $this->strview, $this->qbank->edit_question_url($question->id));
         }
     }
@@ -792,16 +793,22 @@ class question_bank_question_text_row extends question_bank_row_base {
     }
 
     protected function display_content($question, $rowclasses) {
-        $text = format_text($question->questiontext, $question->questiontextformat,
-                $this->formatoptions, $this->qbank->get_courseid());
+        $text = question_rewrite_questiontext_preview_urls($question->questiontext,
+                $question->contextid, 'question', $question->id);
+        $text = format_text($text, $question->questiontextformat,
+                $this->formatoptions);
         if ($text == '') {
             $text = '&#160;';
         }
         echo $text;
     }
 
+    public function get_extra_joins() {
+        return array('qc' => 'JOIN {question_categories} qc ON qc.id = q.category');
+    }
+
     public function get_required_fields() {
-        return array('q.questiontext', 'q.questiontextformat');
+        return array('q.id', 'q.questiontext', 'q.questiontextformat', 'qc.contextid');
     }
 }
 
@@ -960,7 +967,7 @@ class question_bank_view {
     }
 
     /**
-     * Deal with a sort name of the forum columnname, or colname_subsort by
+     * Deal with a sort name of the form columnname, or colname_subsort by
      * breaking it up, validating the bits that are presend, and returning them.
      * If there is no subsort, then $subsort is returned as ''.
      * @return array array($colname, $subsort).
@@ -1026,6 +1033,8 @@ class question_bank_view {
     }
 
     protected function default_sort() {
+        $this->requiredcolumns['qtype'] = $this->knowncolumntypes['qtype'];
+        $this->requiredcolumns['questionname'] = $this->knowncolumntypes['questionname'];
         return array('qtype' => 1, 'questionname' => 1);
     }
 
@@ -1097,14 +1106,14 @@ class question_bank_view {
         $sorts = array();
         foreach ($this->sort as $sort => $order) {
             list($colname, $subsort) = $this->parse_subsort($sort);
-            $sorts[] = $this->knowncolumntypes[$colname]->sort_expression($order < 0, $subsort);
+            $sorts[] = $this->requiredcolumns[$colname]->sort_expression($order < 0, $subsort);
         }
 
     /// Build the where clause.
-        $tests = array('parent = 0');
+        $tests = array('q.parent = 0');
 
         if (!$showhidden) {
-            $tests[] = 'hidden = 0';
+            $tests[] = 'q.hidden = 0';
         }
 
         if ($recurse) {
@@ -1168,8 +1177,8 @@ class question_bank_view {
      * category      Chooses the category
      * displayoptions Sets display options
      */
-    public function display($tabname, $page, $perpage, $sortorder,
-            $sortorderdecoded, $cat, $recurse, $showhidden, $showquestiontext){
+    public function display($tabname, $page, $perpage, $cat,
+            $recurse, $showhidden, $showquestiontext) {
         global $PAGE, $OUTPUT;
 
         if ($this->process_actions_needing_ui()) {
@@ -1191,14 +1200,15 @@ class question_bank_view {
         $this->print_category_info($category);
 
         // continues with list of questions
-        $this->display_question_list($this->contexts->having_one_edit_tab_cap($tabname), $this->baseurl, $cat, $this->cm,
-                $recurse, $page, $perpage, $showhidden, $sortorder, $sortorderdecoded, $showquestiontext,
+        $this->display_question_list($this->contexts->having_one_edit_tab_cap($tabname),
+                $this->baseurl, $cat, $this->cm,
+                $recurse, $page, $perpage, $showhidden, $showquestiontext,
                 $this->contexts->having_cap('moodle/question:add'));
     }
 
     protected function print_choose_category_message($categoryandcontext) {
         echo "<p style=\"text-align:center;\"><b>";
-        print_string("selectcategoryabove", "question");
+        print_string('selectcategoryabove', 'question');
         echo "</b></p>";
     }
 
@@ -1246,13 +1256,13 @@ class question_bank_view {
         echo "</div>\n";
     }
 
-    protected function display_options($recurse = 1, $showhidden = false, $showquestiontext = false) {
+    protected function display_options($recurse, $showhidden, $showquestiontext) {
         echo '<form method="get" action="edit.php" id="displayoptions">';
         echo "<fieldset class='invisiblefieldset'>";
-        echo html_writer::input_hidden_params($this->baseurl, array('recurse', 'showhidden', 'showquestiontext'));
-        $this->display_category_form_checkbox('recurse', get_string('includesubcategories', 'question'));
-        $this->display_category_form_checkbox('showhidden', get_string('showhidden', 'question'));
-        $this->display_category_form_checkbox('qbshowtext', get_string('showquestiontext', 'question'));
+        echo html_writer::input_hidden_params($this->baseurl, array('recurse', 'showhidden', 'qbshowtext'));
+        $this->display_category_form_checkbox('recurse', $recurse, get_string('includesubcategories', 'question'));
+        $this->display_category_form_checkbox('showhidden', $showhidden, get_string('showhidden', 'question'));
+        $this->display_category_form_checkbox('qbshowtext', $showquestiontext, get_string('showquestiontext', 'question'));
         echo '<noscript><div class="centerpara"><input type="submit" value="'. get_string('go') .'" />';
         echo '</div></noscript></fieldset></form>';
     }
@@ -1260,10 +1270,10 @@ class question_bank_view {
     /**
      * Print a single option checkbox. Used by the preceeding.
      */
-    protected function display_category_form_checkbox($name, $label) {
+    protected function display_category_form_checkbox($name, $value, $label) {
         echo '<div><input type="hidden" id="' . $name . '_off" name="' . $name . '" value="0" />';
         echo '<input type="checkbox" id="' . $name . '_on" name="' . $name . '" value="1"';
-        if (optional_param($name, false, PARAM_BOOL)) {
+        if ($value) {
             echo ' checked="checked"';
         }
         echo ' onchange="getElementById(\'displayoptions\').submit(); return true;" />';
@@ -1297,7 +1307,6 @@ class question_bank_view {
     */
     protected function display_question_list($contexts, $pageurl, $categoryandcontext,
             $cm = null, $recurse=1, $page=0, $perpage=100, $showhidden=false,
-            $sortorder='typename', $sortorderdecoded='qtype, name ASC',
             $showquestiontext = false, $addcontexts = array()) {
         global $CFG, $DB, $OUTPUT;
 
@@ -1355,10 +1364,10 @@ class question_bank_view {
         echo $OUTPUT->render($pagingbar);
         if ($totalnumber > DEFAULT_QUESTIONS_PER_PAGE) {
             if ($perpage == DEFAULT_QUESTIONS_PER_PAGE) {
-                $url = new moodle_url('edit.php', ($pageurl->params()+array('qperpage'=>1000)));
+                $url = new moodle_url('edit.php', array_merge($pageurl->params(), array('qperpage'=>1000)));
                 $showall = '<a href="'.$url.'">'.get_string('showall', 'moodle', $totalnumber).'</a>';
             } else {
-                $url = new moodle_url('edit.php', ($pageurl->params()+array('qperpage'=>DEFAULT_QUESTIONS_PER_PAGE)));
+                $url = new moodle_url('edit.php', array_merge($pageurl->params(), array('qperpage'=>DEFAULT_QUESTIONS_PER_PAGE)));
                 $showall = '<a href="'.$url.'">'.get_string('showperpage', 'moodle', DEFAULT_QUESTIONS_PER_PAGE).'</a>';
             }
             echo "<div class='paging'>$showall</div>";
@@ -1425,9 +1434,7 @@ class question_bank_view {
         if ($question->id == $this->lastchangedid) {
             $classes[] ='highlight';
         }
-        if (!empty($this->extrarows)) {
-            $classes[] = 'r' . ($rowcount % 2);
-        }
+        $classes[] = 'r' . ($rowcount % 2);
         return $classes;
     }
 
@@ -1639,17 +1646,12 @@ function question_edit_setup($edittab, $baseurl, $requirecmid = false, $requirec
         $pagevars['qperpage'] = DEFAULT_QUESTIONS_PER_PAGE;
     }
 
-    $sortoptions = array('alpha' => 'name, qtype ASC',
-                          'typealpha' => 'qtype, name ASC',
-                          'age' => 'id ASC');
-
-    if ($sortorder = optional_param('qsortorder', '', PARAM_ALPHA)) {
-        $pagevars['qsortorderdecoded'] = $sortoptions[$sortorder];
-        $pagevars['qsortorder'] = $sortorder;
-        $thispageurl->param('qsortorder', $sortorder);
-    } else {
-        $pagevars['qsortorderdecoded'] = $sortoptions['typealpha'];
-        $pagevars['qsortorder'] = 'typealpha';
+    for ($i = 1; $i <= question_bank_view::MAX_SORTS; $i++) {
+        $param = 'qbs' . $i;
+        if (!$sort = optional_param($param, '', PARAM_ALPHAEXT)) {
+            break;
+        }
+        $thispageurl->param($param, $sort);
     }
 
     $defaultcategory = question_make_default_categories($contexts->all());
@@ -1684,11 +1686,11 @@ function question_edit_setup($edittab, $baseurl, $requirecmid = false, $requirec
         $pagevars['showhidden'] = 0;
     }
 
-    if(($showquestiontext = optional_param('showquestiontext', -1, PARAM_BOOL)) != -1) {
-        $pagevars['showquestiontext'] = $showquestiontext;
-        $thispageurl->param('showquestiontext', $showquestiontext);
+    if(($showquestiontext = optional_param('qbshowtext', -1, PARAM_BOOL)) != -1) {
+        $pagevars['qbshowtext'] = $showquestiontext;
+        $thispageurl->param('qbshowtext', $showquestiontext);
     } else {
-        $pagevars['showquestiontext'] = 0;
+        $pagevars['qbshowtext'] = 0;
     }
 
     //category list page
@@ -1793,7 +1795,7 @@ function print_qtype_to_add_option($qtype) {
     echo '<span class="qtypename">';
     $fakequestion = new stdClass();
     $fakequestion->qtype = $qtype->name();
-    print_question_icon($fakequestion);
+    echo print_question_icon($fakequestion);
     echo $qtype->menu_name() . '</span><span class="qtypesummary">' .
             get_string($qtype->name() . 'summary', 'qtype_' . $qtype->name());
     echo "</span></label>\n";

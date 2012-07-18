@@ -104,7 +104,7 @@ if($do_show == 'showentries'){
         $baseurl = new moodle_url('/mod/feedback/show_entries.php');
         $baseurl->params(array('id'=>$id, 'do_show'=>$do_show, 'showall'=>$showall));
 
-        $tablecolumns = array('userpic', 'fullname', 'c.timemodified');
+        $tablecolumns = array('userpic', 'fullname', 'completed_timemodified');
         $tableheaders = array(get_string('userpic'), get_string('fullnameuser'), get_string('date'));
 
         if(has_capability('mod/feedback:deletesubmissions', $context)) {
@@ -190,9 +190,7 @@ if($do_show == 'showentries'){
         echo $OUTPUT->box_start('mdl-align');
         // echo '<table><tr><td width="400">';
         if (!$students) {
-            if($courseid != SITEID){
-                echo $OUTPUT->notification(get_string('noexistingparticipants', 'enrol'));
-            }
+            $table->print_html();
         } else{
             echo print_string('non_anonymous_entries', 'feedback');
             echo ' ('.count($students).')<hr />';
@@ -305,4 +303,3 @@ if($do_show == 'showoneentry') {
 
 echo $OUTPUT->footer();
 
-?>

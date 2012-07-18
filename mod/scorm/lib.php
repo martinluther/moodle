@@ -497,8 +497,8 @@ function scorm_cron () {
 
         mtrace('Updating scorm packages which require daily update');//We are updating
 
-        $scormsupdate = $DB->get_records('scorm', array('updatefreq'=>UPDATE_EVERYDAY));
-        foreach($scormsupdate as $scormupdate) {
+        $scormsupdate = $DB->get_records_select('scorm', 'updatefreq = ? AND scormtype <> ?', array(SCORM_UPDATE_EVERYDAY, SCORM_TYPE_LOCAL));
+        foreach ($scormsupdate as $scormupdate) {
             scorm_parse($scormupdate, true);
         }
     }
@@ -909,6 +909,10 @@ function scorm_pluginfile($course, $cm, $context, $filearea, $args, $forcedownlo
 
     $fs = get_file_storage();
     if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
+        if ($filearea === 'content') { //return file not found straight away to improve performance.
+            send_header_404();
+            die;
+        }
         return false;
     }
 

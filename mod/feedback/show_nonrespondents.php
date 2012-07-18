@@ -69,9 +69,28 @@
     require_capability('mod/feedback:viewreports', $context);
 
     if($action == 'sendmessage' AND has_capability('moodle/course:bulkmessaging', $coursecontext)) {
-        // require_once($CFG->dirroot.'/message/lib.php');
+        $shortname = format_string($course->shortname,
+                                true,
+                                array('context' => $coursecontext));
+        $strfeedbacks = get_string("modulenameplural", "feedback");
+
+        $htmlmessage = "<body id=\"email\">";
+
+        $link1 = $CFG->wwwroot.'/course/view.php?id='.$course->id;
+        $link2 = $CFG->wwwroot.'/mod/feedback/index.php?id='.$course->id;
+        $link3 = $CFG->wwwroot.'/mod/feedback/view.php?id='.$cm->id;
+
+        $htmlmessage .= '<div class="navbar">'.
+        '<a target="_blank" href="'.$link1.'">'.$shortname.'</a> &raquo; '.
+        '<a target="_blank" href="'.$link2.'">'.$strfeedbacks.'</a> &raquo; '.
+        '<a target="_blank" href="'.$link3.'">'.format_string($feedback->name, true).'</a>'.
+        '</div>';
+
+        $htmlmessage .= $message;
+        $htmlmessage .= '</body>';
+
         $good = 1;
-        if(is_array($messageuser)) {
+        if (is_array($messageuser)) {
             foreach ($messageuser as $userid) {
                 $senduser = $DB->get_record('user', array('id'=>$userid));
                 $eventdata = new stdClass();
@@ -80,9 +99,9 @@
                 $eventdata->userfrom         = $USER;
                 $eventdata->userto           = $senduser;
                 $eventdata->subject          = $subject;
-                $eventdata->fullmessage      = $message;
+                $eventdata->fullmessage      = html_to_text($htmlmessage);
                 $eventdata->fullmessageformat = FORMAT_PLAIN;
-                $eventdata->fullmessagehtml  = '';
+                $eventdata->fullmessagehtml  = $htmlmessage;
                 $eventdata->smallmessage     = '';
                 $good = $good && message_send($eventdata);
             }
@@ -101,9 +120,6 @@
     ////////////////////////////////////////////////////////
 
     /// Print the page header
-    $strfeedbacks = get_string("modulenameplural", "feedback");
-    $strfeedback  = get_string("modulename", "feedback");
-
     $PAGE->navbar->add(get_string('show_nonrespondents','feedback'));
     $PAGE->set_heading(format_string($course->fullname));
     $PAGE->set_title(format_string($feedback->name));
@@ -240,10 +256,10 @@
         }
         if(has_capability('moodle/course:bulkmessaging', $coursecontext)) {
             $usehtmleditor = can_use_html_editor();
-            echo '<br /><div class="buttons">';
+            echo '<div class="buttons"><br />';
             echo '<input type="button" id="checkall" value="'.get_string('selectall').'" /> ';
             echo '<input type="button" id="checknone" value="'.get_string('deselectall').'" /> ';
-            echo '</div';
+            echo '</div>';
             echo '<fieldset class="clearfix">';
             echo '<legend class="ftoggler">'.get_string('send_message', 'feedback').'</legend>';
             echo '<div><label for="feedback_subject">'.get_string('subject', 'feedback').'&nbsp;</label><input type="text" id="feedback_subject" size="50" maxlength="255" name="subject" value="'.$subject.'" /></div>';
@@ -257,10 +273,10 @@
             echo '<br /><div class="buttons">';
             echo '<input type="submit" name="send_message" value="'.get_string('send', 'feedback').'" />';
             echo '</div>';
-            echo '</fieldset>';
             echo '<input type="hidden" name="sesskey" value="'.sesskey().'" />';
             echo '<input type="hidden" name="action" value="sendmessage" />';
             echo '<input type="hidden" name="id" value="'.$id.'" />';
+            echo '</fieldset>';
             echo '</form>';
             //include the needed js
             $module = array('name'=>'mod_feedback', 'fullpath'=>'/mod/feedback/feedback.js');
@@ -277,4 +293,3 @@
 
     echo $OUTPUT->footer();
 
-?>

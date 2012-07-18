@@ -54,7 +54,7 @@
 
     //if the use hit enter into a textfield so the form should not submit
     if(isset($formdata->sesskey) AND !isset($formdata->savevalues) AND !isset($formdata->gonextpage) AND !isset($formdata->gopreviouspage)) {
-        $gopage = $formdata->lastpage;
+        $gopage = (int)$formdata->lastpage;
     }
     if(isset($formdata->savevalues)) {
         $savevalues = true;
@@ -281,8 +281,19 @@
 
         if(isset($savereturn) && $savereturn == 'saved') {
             if($feedback->page_after_submit) {
+                require_once($CFG->libdir . '/filelib.php');
+
+                $page_after_submit_output = file_rewrite_pluginfile_urls($feedback->page_after_submit,
+                                                                        'pluginfile.php',
+                                                                        $context->id,
+                                                                        'mod_feedback',
+                                                                        'page_after_submit',
+                                                                        0);
+
                 echo $OUTPUT->box_start('generalbox boxaligncenter boxwidthwide');
-                echo format_text($feedback->page_after_submit, $feedback->page_after_submitformat, array('overflowdiv'=>true));
+                echo format_text($page_after_submit_output,
+                                 $feedback->page_after_submitformat,
+                                 array('overflowdiv' => true));
                 echo $OUTPUT->box_end();
             } else {
                 echo '<p align="center"><b><font color="green">'.get_string('entries_saved','feedback').'</font></b></p>';
@@ -372,7 +383,8 @@
                         //get the value
                         $frmvaluename = $feedbackitem->typ . '_'. $feedbackitem->id;
                         if(isset($savereturn)) {
-                            $value =  isset($formdata->{$frmvaluename})?$formdata->{$frmvaluename}:NULL;
+                            $value = isset($formdata->{$frmvaluename})?$formdata->{$frmvaluename}:NULL;
+                            $value = feedback_clean_input_value($feedbackitem, $value);
                         }else {
                             if(isset($feedbackcompletedtmp->id)) {
                                 $value = feedback_get_item_value($feedbackcompletedtmp->id, $feedbackitem->id, sesskey());

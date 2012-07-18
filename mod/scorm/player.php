@@ -6,20 +6,26 @@
     require_once($CFG->dirroot.'/mod/scorm/locallib.php');
     require_once($CFG->libdir . '/completionlib.php');
 
-    //
-    // Checkin' script parameters
-    //
     $id = optional_param('cm', '', PARAM_INT);       // Course Module ID, or
     $a = optional_param('a', '', PARAM_INT);         // scorm ID
     $scoid = required_param('scoid', PARAM_INT);  // sco ID
     $mode = optional_param('mode', 'normal', PARAM_ALPHA); // navigation mode
     $currentorg = optional_param('currentorg', '', PARAM_RAW); // selected organization
     $newattempt = optional_param('newattempt', 'off', PARAM_ALPHA); // the user request to start a new attempt
+    $displaymode = optional_param('display','',PARAM_ALPHA);
 
     //IE 6 Bug workaround
     if (strpos($_SERVER['HTTP_USER_AGENT'], 'MSIE 6') !== false) {
         @ini_set('zlib.output_compression', 'Off');
         @apache_setenv('no-gzip', 1);
+    }
+
+    //IE 9 workaround for Flash bug: MDL-29213
+    if (strpos($_SERVER['HTTP_USER_AGENT'], 'MSIE 9') !== false) {
+        if (!isset($CFG->additionalhtmlhead)) { //check to make sure set first - that way we can use .=
+            $CFG->additionalhtmlhead = '';
+        }
+        $CFG->additionalhtmlhead .= '<meta http-equiv="X-UA-Compatible" content="IE=8" />';
     }
 
     if (!empty($id)) {
@@ -69,11 +75,18 @@
     $strpopup = get_string('popup','scorm');
     $strexit = get_string('exitactivity','scorm');
 
-    $pagetitle = strip_tags("$course->shortname: ".format_string($scorm->name));
-    $PAGE->set_title($pagetitle);
-    $PAGE->set_heading($course->fullname);
+    $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
 
-    if (!$cm->visible and !has_capability('moodle/course:viewhiddenactivities', get_context_instance(CONTEXT_COURSE,$course->id))) {
+    if ($displaymode == 'popup') {
+        $PAGE->set_pagelayout('popup');
+    } else {
+        $shortname = format_string($course->shortname, true, array('context' => $coursecontext));
+        $pagetitle = strip_tags("$shortname: ".format_string($scorm->name));
+        $PAGE->set_title($pagetitle);
+        $PAGE->set_heading($course->fullname);
+    }
+
+    if (!$cm->visible and !has_capability('moodle/course:viewhiddenactivities', $coursecontext)) {
         echo $OUTPUT->header();
         notice(get_string("activityiscurrentlyhidden"));
         echo $OUTPUT->footer();
@@ -154,22 +167,17 @@
     //
     // Print the page header
     //
-    $bodyscript = '';
-    if ($scorm->popup == 1) {
-        $bodyscript = 'onunload="main.close();"';
+    if (empty($scorm->popup) || $displaymode=='popup') {
+        $exitlink = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$scorm->course.'" title="'.$strexit.'">'.$strexit.'</a> ';
+        $PAGE->set_button($exitlink);
     }
 
-    $exitlink = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$scorm->course.'" title="'.$strexit.'">'.$strexit.'</a> ';
-
-    $PAGE->set_button($exitlink);
-
+    $PAGE->requires->yui2_lib('connection');
     $PAGE->requires->data_for_js('scormplayerdata', Array('cwidth'=>$scorm->width,'cheight'=>$scorm->height,
                                                           'popupoptions' => $scorm->options), true);
     $PAGE->requires->js('/mod/scorm/request.js', true);
     $PAGE->requires->js('/lib/cookies.js', true);
-    //$PAGE->requires->js('/mod/scorm/loaddatamodel.php?id='.$cm->id.$scoidstr.$modestr.$attemptstr, true);
     $PAGE->requires->css('/mod/scorm/styles.css');
-
     echo $OUTPUT->header();
 
     // NEW IMS TOC
@@ -183,33 +191,31 @@
 
 ?>
     <div id="scormpage">
-    
+
       <div id="tocbox">
         <div id='scormapi-parent'>
             <script id="external-scormapi" type="text/JavaScript"></script>
         </div>
-        <div id="scormtop">
 <?php
-    if ($result->prerequisites) {
-        if ($scorm->popup != 0) {
-            //Added incase javascript popups are blocked we don't provide a direct link to the pop-up as JS communication can fail - the user must disable their pop-up blocker.
-            $linkcourse = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$scorm->course.'">' . get_string('finishscormlinkname','scorm') . '</a>';
-            echo $OUTPUT->box(get_string('finishscorm','scorm',$linkcourse), 'generalbox', 'altfinishlink');
-        }
+if ($scorm->hidetoc == SCORM_TOC_POPUP or $mode=='browse' or $mode=='review') {
+    echo '<div id="scormtop">';
+    echo $mode == 'browse' ? '<div id="scormmode" class="scorm-left">'.get_string('browsemode', 'scorm')."</div>\n" : '';
+    echo $mode == 'review' ? '<div id="scormmode" class="scorm-left">'.get_string('reviewmode', 'scorm')."</div>\n" : '';
+    if ($scorm->hidetoc == SCORM_TOC_POPUP) {
+        echo '<div id="scormnav" class="scorm-right">'.$result->tocmenu.'</div>';
     }
-?>
-        <?php echo $mode == 'browse' ? '<div id="scormmode" class="scorm-left">'.get_string('browsemode','scorm')."</div>\n" : ''; ?>
-        <?php echo $mode == 'review' ? '<div id="scormmode" class="scorm-left">'.get_string('reviewmode','scorm')."</div>\n" : ''; ?>
-            <div id="scormnav" class="scorm-right">
-<?php
-if ($scorm->hidetoc == SCORM_TOC_POPUP) {
-    echo $result->tocmenu;
+    echo '</div>';
 }
 ?>
-            </div> <!-- Scormnav -->
-        </div> <!-- Scormtop -->
-            <div id="toctree" class="generalbox">
-            <?php echo $result->toc; ?>
+            <div id="toctree">
+                <?php
+                if (empty($scorm->popup) || $displaymode == 'popup') {
+                    echo $result->toc;
+                } else {
+                    //Added incase javascript popups are blocked we don't provide a direct link to the pop-up as JS communication can fail - the user must disable their pop-up blocker.
+                    $linkcourse = '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$scorm->course.'">' . get_string('finishscormlinkname', 'scorm') . '</a>';
+                    echo $OUTPUT->box(get_string('finishscorm', 'scorm', $linkcourse), 'generalbox', 'altfinishlink');
+                }?>
             </div> <!-- toctree -->
         </div> <!--  tocbox -->
                 <noscript>
@@ -220,7 +226,7 @@ if ($scorm->hidetoc == SCORM_TOC_POPUP) {
                 </noscript>
 <?php
     if ($result->prerequisites) {
-        if ($scorm->popup != 0) {
+        if ($scorm->popup != 0 && $displaymode !=='popup') {
             // Clean the name for the window as IE is fussy
             $name = preg_replace("/[^A-Za-z0-9]/", "", $scorm->name);
             if (!$name) {
@@ -229,7 +235,11 @@ if ($scorm->hidetoc == SCORM_TOC_POPUP) {
             $name = 'scorm_'.$name;
 
             echo html_writer::script('', $CFG->wwwroot.'/mod/scorm/player.js');
-            echo html_writer::script(js_writer::function_call('scorm_openpopup', Array("loadSCO.php?id=".$cm->id.$scoidpop, $name, $scorm->options, $scorm->width, $scorm->height)));
+            $url = new moodle_url($PAGE->url, array('scoid' => $sco->id, 'display' => 'popup'));
+            echo html_writer::script(
+            js_writer::function_call('scorm_openpopup', Array($url->out(false),
+                                                       $name, $scorm->options,
+                                                       $scorm->width, $scorm->height)));
             ?>
             <noscript>
             <!--[if IE]>
@@ -246,14 +256,14 @@ if ($scorm->hidetoc == SCORM_TOC_POPUP) {
     }
 ?>
     </div> <!-- SCORM page -->
-<?php 
+<?php
 // NEW IMS TOC
-if (!isset($result->toctitle)) {
-    $result->toctitle = get_string('toc', 'scorm');
+if (empty($scorm->popup) || $displaymode == 'popup') {
+    if (!isset($result->toctitle)) {
+        $result->toctitle = get_string('toc', 'scorm');
+    }
+    $PAGE->requires->js_init_call('M.mod_scorm.init', array($scorm->hidenav, $scorm->hidetoc, $result->toctitle, $name, $sco->id));
 }
-
-$PAGE->requires->js_init_call('M.mod_scorm.init', array($scorm->hidenav, $scorm->hidetoc, $result->toctitle, $name, $sco->id));
-
 if (!empty($forcejs)) {
     echo $OUTPUT->box(get_string("forcejavascriptmessage", "scorm"), "generalbox boxaligncenter forcejavascriptmessage");
 }

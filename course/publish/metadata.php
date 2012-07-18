@@ -53,8 +53,10 @@ $PAGE->set_heading($course->fullname);
 if (!extension_loaded('xmlrpc')) {
     $errornotification = $OUTPUT->doc_link('admin/environment/php_extension/xmlrpc', '');
     $errornotification .= get_string('xmlrpcdisabledpublish', 'hub');
+    $context = get_context_instance(CONTEXT_COURSE, $course->id);
+    $shortname = format_string($course->shortname, true, array('context' => $context));
     echo $OUTPUT->header();
-    echo $OUTPUT->heading(get_string('publishcourse', 'hub', $course->shortname), 3, 'main');
+    echo $OUTPUT->heading(get_string('publishcourse', 'hub', $shortname), 3, 'main');
     echo $OUTPUT->notification($errornotification);
     echo $OUTPUT->footer();
     die();
@@ -182,10 +184,10 @@ if (has_capability('moodle/course:publish', get_context_instance(CONTEXT_COURSE,
         }
 
         // PUBLISH ACTION
-        
+
         //publish the course information
         $function = 'hub_register_courses';
-        $params = array('courses' => array($courseinfo));     
+        $params = array('courses' => array($courseinfo));
         try {
             $courseids = $xmlrpcclient->call($function, $params);
         } catch (Exception $e) {

@@ -32,15 +32,29 @@
  */
 abstract class backup_controller_dbops extends backup_dbops {
 
-    public static function save_controller($controller, $checksum) {
+    /**
+     * Send one backup controller to DB
+     *
+     * @param backup_controller $controller controller to send to DB
+     * @param string $checksum hash of the controller to be checked
+     * @param bool $includeobj to decide if the object itself must be updated (true) or no (false)
+     * @param bool $cleanobj to decide if the object itself must be cleaned (true) or no (false)
+     * @return int id of the controller record in the DB
+     * @throws backup_controller_exception|backup_dbops_exception
+     */
+    public static function save_controller($controller, $checksum, $includeobj = true, $cleanobj = false) {
         global $DB;
         // Check we are going to save one backup_controller
         if (! $controller instanceof backup_controller) {
             throw new backup_controller_exception('backup_controller_expected');
         }
-        // Check checksum is ok. Sounds silly but it isn't ;-)
-        if (!$controller->is_checksum_correct($checksum)) {
+        // Check checksum is ok. Only if we are including object info. Sounds silly but it isn't ;-).
+        if ($includeobj and !$controller->is_checksum_correct($checksum)) {
             throw new backup_dbops_exception('backup_controller_dbops_saving_checksum_mismatch');
+        }
+        // Cannot request to $includeobj and $cleanobj at the same time.
+        if ($includeobj and $cleanobj) {
+            throw new backup_dbops_exception('backup_controller_dbops_saving_cannot_include_and_delete');
         }
         // Get all the columns
         $rec = new stdclass();
@@ -57,7 +71,11 @@ abstract class backup_controller_dbops extends backup_dbops {
         $rec->executiontime= $controller->get_executiontime();
         $rec->checksum     = $checksum;
         // Serialize information
-        $rec->controller = base64_encode(serialize($controller));
+        if ($includeobj) {
+            $rec->controller = base64_encode(serialize($controller));
+        } else if ($cleanobj) {
+            $rec->controller = '';
+        }
         // Send it to DB
         if ($recexists = $DB->get_record('backup_controllers', array('backupid' => $rec->backupid))) {
             $rec->id = $recexists->id;
@@ -402,17 +420,44 @@ abstract class backup_controller_dbops extends backup_dbops {
     }
 
     /**
+     * Sets the default values for the settings in a backup operation
+     *
+     * Based on the mode of the backup it will delegate the process to
+     * other methods like {@link apply_general_config_defaults} ...
+     * to get proper defaults loaded
+     *
+     * @param backup_controller $controller
+     */
+    public static function apply_config_defaults(backup_controller $controller) {
+        // Based on the mode of the backup (general, automated, import, hub...)
+        // decide the action to perform to get defaults loaded
+        $mode = $controller->get_mode();
+
+        switch ($mode) {
+            case backup::MODE_GENERAL:
+                // Load the general defaults
+                self::apply_general_config_defaults($controller);
+                break;
+            case backup::MODE_AUTOMATED:
+                // TODO: Move the loading from automatic stuff to here
+                break;
+            default:
+                // Nothing to do for other modes (IMPORT/HUB...). Some day we
+                // can define defaults (admin UI...) for them if we want to
+        }
+    }
+
+    /**
      * Sets the controller settings default values from the backup config.
      *
      * @param backup_controller $controller
      */
-    public static function apply_general_config_defaults(backup_controller $controller) {
+    private static function apply_general_config_defaults(backup_controller $controller) {
         $settings = array(
             // Config name                      => Setting name
             'backup_general_users'              => 'users',
             'backup_general_anonymize'          => 'anonymize',
             'backup_general_role_assignments'   => 'role_assignments',
-            'backup_general_user_files'         => 'user_files',
             'backup_general_activities'         => 'activities',
             'backup_general_blocks'             => 'blocks',
             'backup_general_filters'            => 'filters',

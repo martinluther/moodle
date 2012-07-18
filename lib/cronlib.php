@@ -126,10 +126,6 @@ function cron_run() {
     }
     mtrace('Finished blocks');
 
-    //now do plagiarism checks
-    require_once($CFG->libdir.'/plagiarismlib.php');
-    plagiarism_cron();
-
     mtrace("Starting quiz reports");
     if ($reports = $DB->get_records_select('quiz_reports', "cron > 0 AND ((? - lastcron) > cron)", array($timenow))) {
         foreach ($reports as $report) {
@@ -186,6 +182,10 @@ function cron_run() {
         portfolio_cron();
         mtrace('done');
     }
+
+    //now do plagiarism checks
+    require_once($CFG->libdir.'/plagiarismlib.php');
+    plagiarism_cron();
 
 /// Run all core cron jobs, but not every time since they aren't too important.
 /// These don't have a timer to reduce load, so we'll use a random number
@@ -245,18 +245,18 @@ function cron_run() {
         }
         flush();
 
-        // Delete old backup_controllers and logs
-
-        if (!empty($CFG->loglifetime)) {  // value in days
-            $loglifetime = $timenow - ($CFG->loglifetime * 3600 * 24);
-            // Delete child records from backup_logs
+        // Delete old backup_controllers and logs.
+        $loglifetime = get_config('backup', 'loglifetime');
+        if (!empty($loglifetime)) {  // Value in days.
+            $loglifetime = $timenow - ($loglifetime * 3600 * 24);
+            // Delete child records from backup_logs.
             $DB->execute("DELETE FROM {backup_logs}
                            WHERE EXISTS (
                                SELECT 'x'
                                  FROM {backup_controllers} bc
                                 WHERE bc.backupid = {backup_logs}.backupid
                                   AND bc.timecreated < ?)", array($loglifetime));
-            // Delete records from backup_controllers
+            // Delete records from backup_controllers.
             $DB->execute("DELETE FROM {backup_controllers}
                           WHERE timecreated < ?", array($loglifetime));
             mtrace("Deleted old backup records");
@@ -275,9 +275,8 @@ function cron_run() {
         }
         flush();
 
-        if (!empty($CFG->notifyloginfailures)) {
-            notify_login_failures();
-            mtrace('Notified login failured');
+        if (notify_login_failures()) {
+            mtrace('Notified login failures');
         }
         flush();
 
@@ -292,8 +291,9 @@ function cron_run() {
                                                      p.id as prefid
                                                 FROM {user} u
                                                 JOIN {user_preferences} p ON u.id=p.userid
-                                               WHERE p.name='create_password' AND p.value='1' AND u.email !='' ");
+                                               WHERE p.name='create_password' AND p.value='1' AND u.email !='' AND u.suspended = 0 AND u.auth != 'nologin'");
 
+            // note: we can not send emails to suspended accounts
             foreach ($newusers as $newuser) {
                 // email user
                 if (setnew_password_and_mail($newuser)) {
@@ -423,7 +423,7 @@ function cron_run() {
 
     //Run registration updated cron
     mtrace(get_string('siteupdatesstart', 'hub'));
-    require_once($CFG->dirroot . '/admin/registration/lib.php');
+    require_once($CFG->dirroot . '/' . $CFG->admin . '/registration/lib.php');
     $registrationmanager = new registration_manager();
     $registrationmanager->cron();
     mtrace(get_string('siteupdatesend', 'hub'));

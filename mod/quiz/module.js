@@ -34,6 +34,14 @@ M.mod_quiz.init_review_form = function(Y) {
     Y.on('submit', function(e) { e.halt(); }, '.questionflagsaveform');
 };
 
+M.mod_quiz.init_comment_popup = function(Y) {
+    // Add a close button to the window.
+    var closebutton = Y.Node.create('<input type="button" />');
+    closebutton.set('value', M.util.get_string('cancel', 'moodle'));
+    Y.one('#id_submitbutton').ancestor().append(closebutton);
+    Y.on('click', function() { window.close() }, closebutton);
+}
+
 // Code for updating the countdown timer that is used on timed quizzes.
 M.mod_quiz.timer = {
     // YUI object.
@@ -105,7 +113,7 @@ M.mod_quiz.timer = {
         var minutes = Math.floor(secondsleft/60);
         secondsleft -= minutes*60;
         var seconds = secondsleft;
-        Y.one('#quiz-time-left').setContent('' + hours + ':' +
+        Y.one('#quiz-time-left').setContent(hours + ':' +
                 M.mod_quiz.timer.two_digit(minutes) + ':' +
                 M.mod_quiz.timer.two_digit(seconds));
 
@@ -135,6 +143,29 @@ M.mod_quiz.nav.init = function(Y) {
 
     var form = Y.one('#responseform');
     if (form) {
+        function find_enabled_submit() {
+            // This is rather inelegant, but the CSS3 selector
+            //     return form.one('input[type=submit]:enabled');
+            // does not work in IE7, 8 or 9 for me.
+            var enabledsubmit = null;
+            form.all('input[type=submit]').each(function(submit) {
+                if (!enabledsubmit && !submit.get('disabled')) {
+                    enabledsubmit = submit;
+                }
+            });
+            return enabledsubmit;
+        }
+
+        function nav_to_page(pageno) {
+            Y.one('#followingpage').set('value', pageno);
+
+            // Automatically submit the form. We do it this strange way because just
+            // calling form.submit() does not run the form's submit event handlers.
+            var submit = find_enabled_submit();
+            submit.set('name', '');
+            submit.getDOMNode().click();
+        };
+
         Y.delegate('click', function(e) {
             if (this.hasClass('thispage')) {
                 return;
@@ -149,22 +180,20 @@ M.mod_quiz.nav.init = function(Y) {
             } else {
                 pageno = 0;
             }
-            Y.one('#followingpage').set('value', pageno);
 
             var questionidmatch = this.get('href').match(/#q(\d+)/);
             if (questionidmatch) {
                 form.set('action', form.get('action') + '#q' + questionidmatch[1]);
             }
 
-            form.submit();
+            nav_to_page(pageno);
         }, document.body, '.qnbutton');
     }
 
     if (Y.one('a.endtestlink')) {
         Y.on('click', function(e) {
-            e.preventDefault(e);
-            Y.one('#followingpage').set('value', -1);
-            Y.one('#responseform').submit();
+            e.preventDefault();
+            nav_to_page(-1);
         }, 'a.endtestlink');
     }
 
@@ -178,11 +207,14 @@ M.mod_quiz.secure_window = {
         if (window.location.href.substring(0, 4) == 'file') {
             window.location = 'about:blank';
         }
-        Y.delegate('contextmenu', M.mod_quiz.secure_window.prevent, document.body, '*');
-        Y.delegate('mousedown', M.mod_quiz.secure_window.prevent_mouse, document.body, '*');
-        Y.delegate('mouseup', M.mod_quiz.secure_window.prevent_mouse, document.body, '*');
-        Y.delegate('dragstart', M.mod_quiz.secure_window.prevent, document.body, '*');
-        Y.delegate('selectstart', M.mod_quiz.secure_window.prevent, document.body, '*');
+        Y.delegate('contextmenu', M.mod_quiz.secure_window.prevent, document, '*');
+        Y.delegate('mousedown',   M.mod_quiz.secure_window.prevent_mouse, document, '*');
+        Y.delegate('mouseup',     M.mod_quiz.secure_window.prevent_mouse, document, '*');
+        Y.delegate('dragstart',   M.mod_quiz.secure_window.prevent, document, '*');
+        Y.delegate('selectstart', M.mod_quiz.secure_window.prevent, document, '*');
+        Y.delegate('cut',         M.mod_quiz.secure_window.prevent, document, '*');
+        Y.delegate('copy',        M.mod_quiz.secure_window.prevent, document, '*');
+        Y.delegate('paste',       M.mod_quiz.secure_window.prevent, document, '*');
         M.mod_quiz.secure_window.clear_status;
         Y.on('beforeprint', function() {
             Y.one(document.body).setStyle('display', 'none');

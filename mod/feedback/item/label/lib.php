@@ -49,6 +49,10 @@ class feedback_item_label extends feedback_item_base {
         //preparing the editor for new file-api
         $item->presentationformat = FORMAT_HTML;
         $item->presentationtrust = 1;
+
+        // Append editor context to presentation options, giving preference to existing context.
+        $this->presentationoptions = array_merge(array('context' => $this->context), $this->presentationoptions);
+
         $item = file_prepare_standard_editor($item,
                                             'presentation', //name of the form element
                                             $this->presentationoptions,
@@ -131,7 +135,9 @@ class feedback_item_label extends feedback_item_base {
         $item->presentationtrust = 1;
 
         $output = file_rewrite_pluginfile_urls($item->presentation, 'pluginfile.php', $context->id, 'mod_feedback', $filearea, $item->id);
-        echo format_text($output, FORMAT_HTML, array('overflowdiv'=>true));
+
+        $formatoptions = array('overflowdiv'=>true, 'trusted'=>$CFG->enabletrusttext);
+        echo format_text($output, FORMAT_HTML, $formatoptions);
     }
 
     /**
@@ -227,4 +233,8 @@ class feedback_item_label extends feedback_item_base {
     function print_analysed($item, $itemnr = '', $groupid = false, $courseid = false) {}
     function get_printval($item, $value) {}
     function get_analysed($item, $groupid = false, $courseid = false) {}
+
+    function clean_input_value($value) {
+        return '';
+    }
 }

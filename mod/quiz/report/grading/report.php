@@ -117,10 +117,14 @@ class quiz_grading_report extends quiz_default_report {
         }
 
         // Get the group, and the list of significant users.
-        $this->currentgroup = groups_get_activity_group($this->cm, true);
-        $this->users = get_users_by_capability($this->context,
-                array('mod/quiz:reviewmyattempts', 'mod/quiz:attempt'), '', '', '', '',
-                $this->currentgroup, '', false);
+        $this->currentgroup = $this->get_current_group($cm, $course, $this->context);
+        if ($this->currentgroup == self::NO_GROUPS_ALLOWED) {
+            $this->users = array();
+        } else {
+            $this->users = get_users_by_capability($this->context,
+                    array('mod/quiz:reviewmyattempts', 'mod/quiz:attempt'), '', '', '', '',
+                    $this->currentgroup, '', false);
+        }
 
         // Start output.
         $this->print_header_and_tabs($cm, $course, $quiz, 'grading');
@@ -450,11 +454,7 @@ class quiz_grading_report extends quiz_default_report {
 
         foreach ($qubaids as $qubaid) {
             foreach ($slots as $slot) {
-                $prefix = 'q' . $qubaid . ':' . $slot . '_';
-                $mark = optional_param($prefix . '-mark', null, PARAM_NUMBER);
-                $maxmark = optional_param($prefix . '-maxmark', null, PARAM_NUMBER);
-                $minfraction = optional_param($prefix . ':minfraction', null, PARAM_NUMBER);
-                if (!is_null($mark) && ($mark < $minfraction * $maxmark || $mark > $maxmark)) {
+                if (!question_behaviour::is_manual_grade_in_range($qubaid, $slot)) {
                     return false;
                 }
             }
@@ -520,7 +520,7 @@ class quiz_grading_report extends quiz_default_report {
      */
     protected function get_usage_ids_where_question_in_state($summarystate, $slot,
             $questionid = null, $orderby = 'random', $page = 0, $pagesize = null) {
-        global $CFG;
+        global $CFG, $DB;
         $dm = new question_engine_data_mapper();
 
         if ($pagesize && $orderby != 'random') {
@@ -544,7 +544,7 @@ class quiz_grading_report extends quiz_default_report {
         } else if ($orderby == 'student' || $orderby == 'idnumber') {
             $qubaids->from .= " JOIN {user} u ON quiza.userid = u.id ";
             if ($orderby == 'student') {
-                $orderby = sql_fullname('u.firstname', 'u.lastname');
+                $orderby = $DB->sql_fullname('u.firstname', 'u.lastname');
             }
         }
 

@@ -31,7 +31,7 @@
             'search' => $search,
             'roleid' => $roleid,
             'contextid' => $contextid,
-            'courseid' => $courseid));
+            'id' => $courseid));
 
     if ($contextid) {
         $context = get_context_instance_by_id($contextid, MUST_EXIST);
@@ -103,6 +103,7 @@
 
     $strnever = get_string('never');
 
+    $datestring = new stdClass();
     $datestring->year  = get_string('year');
     $datestring->years = get_string('years');
     $datestring->day   = get_string('day');
@@ -135,11 +136,6 @@
 
     $isseparategroups = ($course->groupmode == SEPARATEGROUPS and !has_capability('moodle/site:accessallgroups', $context));
 
-    if ($course->id===SITEID) {
-        $PAGE->navbar->ignore_active();
-    }
-
-    $PAGE->navbar->add(get_string('participants'));
     $PAGE->set_title("$course->shortname: ".get_string('participants'));
     $PAGE->set_heading($course->fullname);
     $PAGE->set_pagetype('course-view-' . $course->format);
@@ -203,11 +199,12 @@
         $courselist = array();
         $popupurl = new moodle_url('/user/index.php?roleid='.$roleid.'&sifirst=&silast=');
         foreach ($mycourses as $mycourse) {
-            $courselist[$mycourse->id] = format_string($mycourse->shortname);
+            $coursecontext = get_context_instance(CONTEXT_COURSE, $mycourse->id);
+            $courselist[$mycourse->id] = format_string($mycourse->shortname, true, array('context' => $coursecontext));
         }
         if (has_capability('moodle/site:viewparticipants', $systemcontext)) {
             unset($courselist[SITEID]);
-            $courselist = array(SITEID => format_string($SITE->shortname)) + $courselist;
+            $courselist = array(SITEID => format_string($SITE->shortname, true, array('context' => $systemcontext))) + $courselist;
         }
         $select = new single_select($popupurl, 'id', $courselist, $course->id, array(''=>'choosedots'), 'courseform');
         $select->set_label(get_string('mycourses'));
@@ -344,6 +341,8 @@
 
     if (!isset($hiddenfields['lastaccess'])) {
         $table->sortable(true, 'lastaccess', SORT_DESC);
+    } else {
+        $table->sortable(true, 'firstname', SORT_ASC);
     }
 
     $table->no_sorting('roles');
@@ -470,6 +469,7 @@
     }
 
     if ($roleid > 0) {
+        $a = new stdClass();
         $a->number = $totalcount;
         $a->role = $rolenames[$roleid];
         $heading = format_string(get_string('xuserswiththerole', 'role', $a));
@@ -485,6 +485,7 @@
         }
 
         $heading .= ": $a->number";
+
         if (user_can_assign($context, $roleid)) {
             $heading .= ' <a href="'.$CFG->wwwroot.'/'.$CFG->admin.'/roles/assign.php?roleid='.$roleid.'&amp;contextid='.$context->id.'">';
             $heading .= '<img src="'.$OUTPUT->pix_url('i/edit') . '" class="icon" alt="" /></a>';
@@ -660,8 +661,8 @@
 
                     $row->cells[2]->text .= implode('', $links);
 
-                    if (!empty($messageselect)) {
-                        $row->cells[2]->text .= '<br /><input type="checkbox" name="user'.$user->id.'" /> ';
+                    if ($bulkoperations) {
+                        $row->cells[2]->text .= '<br /><input type="checkbox" class="usercheckbox" name="user'.$user->id.'" /> ';
                     }
                     $table->data = array($row);
                     echo html_writer::table($table);

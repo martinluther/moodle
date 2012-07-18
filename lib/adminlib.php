@@ -249,6 +249,10 @@ function uninstall_plugin($type, $name) {
 
     // perform clean-up task common for all the plugin/subplugin types
 
+    //delete the web service functions and pre-built services
+    require_once($CFG->dirroot.'/lib/externallib.php');
+    external_delete_descriptions($component);
+
     // delete calendar events
     $DB->delete_records('event', array('modulename' => $pluginname));
 
@@ -3027,7 +3031,7 @@ class admin_setting_bloglevel extends admin_setting_configselect {
      */
     public function write_setting($data) {
         global $DB, $CFG;
-        if ($data['bloglevel'] == 0) {
+        if ($data == 0) {
             $blogblocks = $DB->get_records_select('block', "name LIKE 'blog_%' AND visible = 1");
             foreach ($blogblocks as $block) {
                 $DB->set_field('block', 'visible', 0, array('id' => $block->id));
@@ -4172,7 +4176,7 @@ class admin_setting_configcheckbox_with_lock extends admin_setting_configcheckbo
             $checkboxparams['checked'] = 'checked';
         }
 
-        $lockcheckboxparams = array('type'=>'checkbox', 'id'=>$id.'_locked','name'=>$fullname.'[locked]', 'value'=>1, 'class'=>'form-checkbox');
+        $lockcheckboxparams = array('type'=>'checkbox', 'id'=>$id.'_locked','name'=>$fullname.'[locked]', 'value'=>1, 'class'=>'form-checkbox locked-checkbox');
         if (!empty($data['locked'])) { // convert to strings before comparison
             $lockcheckboxparams['checked'] = 'checked';
         }
@@ -5787,20 +5791,6 @@ function admin_externalpage_setup($section, $extrabutton = '', array $extraurlpa
     $site = get_site();
     require_login();
 
-    $adminroot = admin_get_root(false, false); // settings not required for external pages
-    $extpage = $adminroot->locate($section, true);
-
-    if (empty($extpage) or !($extpage instanceof admin_externalpage)) {
-        print_error('sectionerror', 'admin', "$CFG->wwwroot/$CFG->admin/");
-        die;
-    }
-
-    // this eliminates our need to authenticate on the actual pages
-    if (!$extpage->check_access()) {
-        print_error('accessdenied', 'admin');
-        die;
-    }
-
     if (!empty($options['pagelayout'])) {
         // A specific page layout has been requested.
         $PAGE->set_pagelayout($options['pagelayout']);
@@ -5808,6 +5798,27 @@ function admin_externalpage_setup($section, $extrabutton = '', array $extraurlpa
         $PAGE->set_pagelayout('maintenance');
     } else {
         $PAGE->set_pagelayout('admin');
+    }
+
+    $adminroot = admin_get_root(false, false); // settings not required for external pages
+    $extpage = $adminroot->locate($section, true);
+
+    if (empty($extpage) or !($extpage instanceof admin_externalpage)) {
+        // The requested section isn't in the admin tree
+        // It could be because the user has inadequate capapbilities or because the section doesn't exist
+        if (!has_capability('moodle/site:config', get_system_context())) {
+            // The requested section could depend on a different capability
+            // but most likely the user has inadequate capabilities
+            print_error('accessdenied', 'admin');
+        } else {
+            print_error('sectionerror', 'admin', "$CFG->wwwroot/$CFG->admin/");
+        }
+    }
+
+    // this eliminates our need to authenticate on the actual pages
+    if (!$extpage->check_access()) {
+        print_error('accessdenied', 'admin');
+        die;
     }
 
     // $PAGE->set_extra_button($extrabutton); TODO
@@ -7059,10 +7070,25 @@ class admin_setting_webservicesoverview extends admin_setting {
         global $CFG, $OUTPUT;
 
         $return = "";
-
-        /// One system controlling Moodle with Token
         $brtag = html_writer::empty_tag('br');
 
+        // Enable mobile web service
+        $enablemobile = new admin_setting_enablemobileservice('enablemobilewebservice',
+                get_string('enablemobilewebservice', 'admin'),
+                get_string('configenablemobilewebservice',
+                        'admin', ''), 0); //we don't want to display it but to know the ws mobile status
+        $manageserviceurl = new moodle_url("/admin/settings.php?section=externalservices");
+        $wsmobileparam = new stdClass();
+        $wsmobileparam->enablemobileservice = get_string('enablemobilewebservice', 'admin');
+        $wsmobileparam->manageservicelink = html_writer::link($manageserviceurl,
+                get_string('externalservices', 'webservice'));
+        $mobilestatus = $enablemobile->get_setting()?get_string('mobilewsenabled', 'webservice'):get_string('mobilewsdisabled', 'webservice');
+        $wsmobileparam->wsmobilestatus = html_writer::tag('strong', $mobilestatus);
+        $return .= $OUTPUT->heading(get_string('enablemobilewebservice', 'admin'), 3, 'main');
+        $return .= $brtag . get_string('enablemobilewsoverview', 'webservice', $wsmobileparam)
+                . $brtag . $brtag;
+
+        /// One system controlling Moodle with Token
         $return .= $OUTPUT->heading(get_string('onesystemcontrolling', 'webservice'), 3, 'main');
         $table = new html_table();
         $table->head = array(get_string('step', 'webservice'), get_string('status'),
@@ -7502,7 +7528,7 @@ class admin_setting_managewebservicetokens extends admin_setting {
         //TODO: in order to let the administrator delete obsolete token, split this request in multiple request or use LEFT JOIN
 
         //here retrieve token list (including linked users firstname/lastname and linked services name)
-        $sql = "SELECT t.id, t.token, u.id AS userid, u.firstname, u.lastname, s.name, t.validuntil, s.id AS serviceid
+        $sql = "SELECT t.id, t.token, u.id AS userid, u.firstname, u.lastname, s.name, t.iprestriction, t.validuntil, s.id AS serviceid
                   FROM {external_tokens} t, {user} u, {external_services} s
                  WHERE t.creatorid=? AND t.tokentype = ? AND s.id = t.externalserviceid AND t.userid = u.id";
         $tokens = $DB->get_records_sql($sql, array($USER->id, EXTERNAL_TOKEN_PERMANENT));
@@ -7536,7 +7562,7 @@ class admin_setting_managewebservicetokens extends admin_setting {
 
                 if (!is_siteadmin($token->userid) and
                         key_exists($token->userid, $usermissingcaps)) {
-                    $missingcapabilities = implode(',',
+                    $missingcapabilities = implode(', ',
                             $usermissingcaps[$token->userid]);
                     if (!empty($missingcapabilities)) {
                         $useratag .= html_writer::tag('div',

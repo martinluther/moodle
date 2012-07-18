@@ -68,6 +68,7 @@ class qtype_calculated_test_helper extends question_test_helper {
         $q->unitgradingtype = 0;
         $q->unitpenalty = 0;
         $q->ap = new qtype_numerical_answer_processor(array());
+        $q->synchronised = false;
 
         $q->datasetloader = new qtype_calculated_test_dataset_loader(0, array(
             array('a' => 1, 'b' => 5),
@@ -75,6 +76,43 @@ class qtype_calculated_test_helper extends question_test_helper {
         ));
 
         return $q;
+    }
+
+    /**
+     * Makes a calculated question about summing two numbers.
+     * @return qtype_calculated_question
+     */
+    public function get_calculated_question_data_sum() {
+        question_bank::load_question_definition_classes('calculated');
+        $qdata = new stdClass();
+        test_question_maker::initialise_question_data($qdata);
+
+        $qdata->qtype = 'calculated';
+        $qdata->name = 'Simple sum';
+        $qdata->questiontext = 'What is {a} + {b}?';
+        $qdata->generalfeedback = 'Generalfeedback: {={a} + {b}} is the right answer.';
+
+        $qdata->options = new stdClass();
+        $qdata->options->unitgradingtype = 0;
+        $qdata->options->unitpenalty = 0.0;
+        $qdata->options->showunits = qtype_numerical::UNITNONE;
+        $qdata->options->unitsleft = 0;
+        $qdata->options->synchronize = 0;
+
+        $qdata->options->answers = array(
+            13 => new qtype_numerical_answer(13, '{a} + {b}', 1.0, 'Very good.', FORMAT_HTML, 0.001),
+            14 => new qtype_numerical_answer(14, '{a} - {b}', 0.0, 'Add. not subtract!.',
+                    FORMAT_HTML, 0.001),
+            17 => new qtype_numerical_answer(17, '*', 0.0, 'Completely wrong.', FORMAT_HTML, 0),
+        );
+        foreach ($qdata->options->answers as $answer) {
+            $answer->correctanswerlength = 2;
+            $answer->correctanswerformat = 1;
+        }
+
+        $qdata->options->units = array();
+
+        return $qdata;
     }
 }
 
@@ -88,6 +126,7 @@ class qtype_calculated_test_helper extends question_test_helper {
  */
 class qtype_calculated_test_dataset_loader extends qtype_calculated_dataset_loader{
     protected $valuesets;
+    protected $aresynchronised = array();
 
     public function __construct($questionid, array $valuesets) {
         parent::__construct($questionid);
@@ -100,5 +139,18 @@ class qtype_calculated_test_dataset_loader extends qtype_calculated_dataset_load
 
     public function load_values($itemnumber) {
         return $this->valuesets[$itemnumber - 1];
+    }
+
+    public function datasets_are_synchronised($category) {
+        return !empty($this->aresynchronised[$category]);
+    }
+
+    /**
+     * Allows the test to mock the return value of {@link datasets_are_synchronised()}.
+     * @param int $category
+     * @param bool $aresychronised
+     */
+    public function set_are_synchronised($category, $aresychronised) {
+        $this->aresynchronised[$category] = $aresychronised;
     }
 }

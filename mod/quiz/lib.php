@@ -407,7 +407,7 @@ function quiz_user_complete($course, $user, $mod, $quiz) {
     if ($attempts = $DB->get_records('quiz_attempts',
             array('userid' => $user->id, 'quiz' => $quiz->id), 'attempt')) {
         foreach ($attempts as $attempt) {
-            echo get_string('attempt', 'quiz').' '.$attempt->attempt.': ';
+            echo get_string('attempt', 'quiz', $attempt->attempt) . ': ';
             if ($attempt->timefinish == 0) {
                 print_string('unfinished');
             } else {
@@ -588,6 +588,7 @@ function quiz_upgrade_grades() {
  */
 function quiz_grade_item_update($quiz, $grades = null) {
     global $CFG, $OUTPUT;
+    require_once($CFG->dirroot . '/mod/quiz/locallib.php');
     require_once($CFG->libdir.'/gradelib.php');
 
     if (array_key_exists('cmidnumber', $quiz)) { // may not be always present
@@ -1089,8 +1090,8 @@ function quiz_update_events($quiz, $override = null) {
         $addclose = empty($current->id) || !empty($current->timeclose);
 
         $event = new stdClass();
-        $event->description = $quiz->intro;
-        // Events module won't show user events when the courseid is nonzero
+        $event->description = format_module_intro('quiz', $quiz, $quiz->coursemodule);
+        // Events module won't show user events when the courseid is nonzero.
         $event->courseid    = ($userid) ? 0 : $quiz->course;
         $event->groupid     = $groupid;
         $event->userid      = $userid;
@@ -1268,12 +1269,14 @@ function quiz_reset_userdata($data) {
             'error' => false);
 
         // Remove all grades from gradebook
+        $DB->delete_records_select('quiz_grades',
+                'quiz IN (SELECT id FROM {quiz} WHERE course = ?)', array($data->courseid));
         if (empty($data->reset_gradebook_grades)) {
             quiz_reset_gradebook($data->courseid);
         }
         $status[] = array(
             'component' => $componentstr,
-            'item' => get_string('attemptsdeleted', 'quiz'),
+            'item' => get_string('gradesdeleted', 'quiz'),
             'error' => false);
     }
 
@@ -1428,9 +1431,10 @@ function quiz_num_attempt_summary($quiz, $cm, $returnzero = false, $currentgroup
     $numattempts = $DB->count_records('quiz_attempts', array('quiz'=> $quiz->id, 'preview'=>0));
     if ($numattempts || $returnzero) {
         if (groups_get_activity_groupmode($cm)) {
+            $a = new stdClass();
             $a->total = $numattempts;
             if ($currentgroup) {
-                $a->group = $DB->count_records_sql('SELECT count(1) FROM ' .
+                $a->group = $DB->count_records_sql('SELECT COUNT(DISTINCT qa.id) FROM ' .
                         '{quiz_attempts} qa JOIN ' .
                         '{groups_members} gm ON qa.userid = gm.userid ' .
                         'WHERE quiz = ? AND preview = 0 AND groupid = ?',
@@ -1438,7 +1442,7 @@ function quiz_num_attempt_summary($quiz, $cm, $returnzero = false, $currentgroup
                 return get_string('attemptsnumthisgroup', 'quiz', $a);
             } else if ($groups = groups_get_all_groups($cm->course, $USER->id, $cm->groupingid)) {
                 list($usql, $params) = $DB->get_in_or_equal(array_keys($groups));
-                $a->group = $DB->count_records_sql('SELECT count(1) FROM ' .
+                $a->group = $DB->count_records_sql('SELECT COUNT(DISTINCT qa.id) FROM ' .
                         '{quiz_attempts} qa JOIN ' .
                         '{groups_members} gm ON qa.userid = gm.userid ' .
                         'WHERE quiz = ? AND preview = 0 AND ' .
@@ -1491,7 +1495,7 @@ function quiz_supports($feature) {
         case FEATURE_MOD_INTRO:               return true;
         case FEATURE_COMPLETION_TRACKS_VIEWS: return true;
         case FEATURE_GRADE_HAS_GRADE:         return true;
-        case FEATURE_GRADE_OUTCOMES:          return true;
+        case FEATURE_GRADE_OUTCOMES:          return false;
         case FEATURE_BACKUP_MOODLE2:          return true;
 
         default: return null;
@@ -1671,7 +1675,7 @@ function quiz_pluginfile($course, $cm, $context, $filearea, $args, $forcedownloa
  */
 function mod_quiz_question_pluginfile($course, $context, $component,
         $filearea, $qubaid, $slot, $args, $forcedownload) {
-    global $USER, $CFG;
+    global $CFG;
     require_once($CFG->dirroot . '/mod/quiz/locallib.php');
 
     $attemptobj = quiz_attempt::create_from_usage_id($qubaid);

@@ -489,11 +489,25 @@ class mysqli_native_moodle_database extends moodle_database {
                     $info->unique        = null;
                 }
 
-            } else if (preg_match('/(decimal|double|float)\((\d+),(\d+)\)/i', $rawcolumn->type, $matches)) {
+            } else if (preg_match('/(decimal)\((\d+),(\d+)\)/i', $rawcolumn->type, $matches)) {
                 $info->type          = $matches[1];
                 $info->meta_type     = 'N';
                 $info->max_length    = $matches[2];
                 $info->scale         = $matches[3];
+                $info->not_null      = ($rawcolumn->null === 'NO');
+                $info->default_value = $rawcolumn->default;
+                $info->has_default   = is_null($info->default_value) ? false : true;
+                $info->primary_key   = ($rawcolumn->key === 'PRI');
+                $info->binary        = false;
+                $info->unsigned      = (stripos($rawcolumn->type, 'unsigned') !== false);
+                $info->auto_increment= false;
+                $info->unique        = null;
+
+            } else if (preg_match('/(double|float)(\((\d+),(\d+)\))?/i', $rawcolumn->type, $matches)) {
+                $info->type          = $matches[1];
+                $info->meta_type     = 'N';
+                $info->max_length    = isset($matches[3]) ? $matches[3] : null;
+                $info->scale         = isset($matches[4]) ? $matches[4] : null;
                 $info->not_null      = ($rawcolumn->null === 'NO');
                 $info->default_value = $rawcolumn->default;
                 $info->has_default   = is_null($info->default_value) ? false : true;
@@ -666,7 +680,8 @@ class mysqli_native_moodle_database extends moodle_database {
             return $sql;
         }
         /// ok, we have verified sql statement with ? and correct number of params
-        $return = strtok($sql, '?');
+        $parts = explode('?', $sql);
+        $return = array_shift($parts);
         foreach ($params as $param) {
             if (is_bool($param)) {
                 $return .= (int)$param;
@@ -680,14 +695,14 @@ class mysqli_native_moodle_database extends moodle_database {
                 $param = $this->mysqli->real_escape_string($param);
                 $return .= "'$param'";
             }
-            $return .= strtok('?');
+            $return .= array_shift($parts);
         }
         return $return;
     }
 
     /**
      * Execute general sql query. Should be used only when no other method suitable.
-     * Do NOT use this to make changes in db structure, use database_manager::execute_sql() instead!
+     * Do NOT use this to make changes in db structure, use database_manager methods instead!
      * @param string $sql query
      * @param array $params query parameters
      * @return bool true
@@ -1188,10 +1203,17 @@ class mysqli_native_moodle_database extends moodle_database {
         return true;
     }
 
-    public function get_session_lock($rowid) {
-        parent::get_session_lock($rowid);
+    /**
+     * Obtain session lock
+     * @param int $rowid id of the row with session record
+     * @param int $timeout max allowed time to wait for the lock in seconds
+     * @return bool success
+     */
+    public function get_session_lock($rowid, $timeout) {
+        parent::get_session_lock($rowid, $timeout);
+
         $fullname = $this->dbname.'-'.$this->prefix.'-session-'.$rowid;
-        $sql = "SELECT GET_LOCK('$fullname',120)";
+        $sql = "SELECT GET_LOCK('$fullname', $timeout)";
         $this->query_start($sql, null, SQL_QUERY_AUX);
         $result = $this->mysqli->query($sql);
         $this->query_end($result);
@@ -1203,8 +1225,7 @@ class mysqli_native_moodle_database extends moodle_database {
             if (reset($arr) == 1) {
                 return;
             } else {
-                // try again!
-                $this->get_session_lock($rowid);
+                throw new dml_sessionwait_exception();
             }
         }
     }

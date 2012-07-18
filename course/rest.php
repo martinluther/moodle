@@ -158,10 +158,7 @@ switch($requestmethod) {
             case 'course':
                 switch($field) {
                     case 'marker':
-                        $newcourse = new stdClass();
-                        $newcourse->id = $course->id;
-                        $newcourse->marker = $value;
-                        $DB->update_record('course', $newcourse);
+                        course_set_marker($course->id, $value);
                         break;
                 }
                 break;
@@ -208,6 +205,14 @@ switch($requestmethod) {
                 if (!delete_mod_from_section($cm->id, $cm->section)) {
                     error_log("Ajax rest.php: Could not delete the $cm->modname $cm->name from section");
                 }
+
+                // Trigger a mod_deleted event with information about this module.
+                $eventdata = new stdClass();
+                $eventdata->modulename = $cm->modname;
+                $eventdata->cmid       = $cm->id;
+                $eventdata->courseid   = $course->id;
+                $eventdata->userid     = $USER->id;
+                events_trigger('mod_deleted', $eventdata);
 
                 rebuild_course_cache($course->id);
 

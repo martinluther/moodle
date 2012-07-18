@@ -133,6 +133,14 @@ define('PARAM_FILE',   'file');
 
 /**
  * PARAM_FLOAT - a real/floating point number.
+ *
+ * Note that you should not use PARAM_FLOAT for numbers typed in by the user.
+ * It does not work for languages that use , as a decimal separator.
+ * Instead, do something like
+ *     $rawvalue = required_param('name', PARAM_RAW);
+ *     // ... other code including require_login, which sets current lang ...
+ *     $realvalue = unformat_float($rawvalue);
+ *     // ... then use $realvalue
  */
 define('PARAM_FLOAT',  'float');
 
@@ -552,7 +560,7 @@ function validate_param($param, $type, $allownull=NULL_NOT_ALLOWED, $debuginfo='
  * </code>
  *
  * @param mixed $param the variable we are cleaning
- * @param int $type expected format of param after cleaning.
+ * @param string $type expected format of param after cleaning.
  * @return mixed
  */
 function clean_param($param, $type) {
@@ -1076,7 +1084,7 @@ function get_config($plugin, $name = NULL) {
         if ($localcfg) {
             return (object)$localcfg;
         } else {
-            return null;
+            return new stdClass();
         }
 
     } else {
@@ -1125,7 +1133,9 @@ function unset_config($name, $plugin=NULL) {
 function unset_all_config_for_plugin($plugin) {
     global $DB;
     $DB->delete_records('config_plugins', array('plugin' => $plugin));
-    $DB->delete_records_select('config', 'name LIKE ?', array($plugin . '_%'));
+    $like = $DB->sql_like('name', '?', true, true, false, '|');
+    $params = array($DB->sql_like_escape($plugin.'_', '|') . '%');
+    $DB->delete_records_select('config', $like, $params);
     return true;
 }
 
@@ -1624,6 +1634,7 @@ function make_timestamp($year, $month=1, $day=1, $hour=0, $minute=0, $second=0, 
     $totalsecs = abs($totalsecs);
 
     if (!$str) {  // Create the str structure the slow way
+        $str = new stdClass();
         $str->day   = get_string('day');
         $str->days  = get_string('days');
         $str->hour  = get_string('hour');
@@ -1795,6 +1806,15 @@ function usergetdate($time, $timezone=99) {
         $getdate['seconds']
     ) = explode('_', $datestring);
 
+    // set correct datatype to match with getdate()
+    $getdate['seconds'] = (int)$getdate['seconds'];
+    $getdate['yday'] = (int)$getdate['yday'] - 1; // gettime returns 0 through 365
+    $getdate['year'] = (int)$getdate['year'];
+    $getdate['mon'] = (int)$getdate['mon'];
+    $getdate['wday'] = (int)$getdate['wday'];
+    $getdate['mday'] = (int)$getdate['mday'];
+    $getdate['hours'] = (int)$getdate['hours'];
+    $getdate['minutes']  = (int)$getdate['minutes'];
     return $getdate;
 }
 
@@ -1970,7 +1990,7 @@ function get_timezone_record($timezonename) {
     }
 
     return $cache[$timezonename] = $DB->get_record_sql('SELECT * FROM {timezone}
-                                                        WHERE name = ? ORDER BY year DESC', array($timezonename), true);
+                                                        WHERE name = ? ORDER BY year DESC', array($timezonename), IGNORE_MULTIPLE);
 }
 
 /**
@@ -2366,6 +2386,13 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
         }
     }
 
+    // If this is an AJAX request and $setwantsurltome is true then we need to override it and set it to false.
+    // Otherwise the AJAX request URL will be set to $SESSION->wantsurl and events such as self enrolment in the future
+    // risk leading the user back to the AJAX request URL.
+    if ($setwantsurltome && defined('AJAX_SCRIPT') && AJAX_SCRIPT) {
+        $setwantsurltome = false;
+    }
+
     // If the user is not even logged in yet then make sure they are
     if (!isloggedin()) {
         if ($autologinguest and !empty($CFG->guestloginbutton) and !empty($CFG->autologinguests)) {
@@ -2410,7 +2437,9 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
     if (get_user_preferences('auth_forcepasswordchange') && !session_is_loggedinas()) {
         $userauth = get_auth_plugin($USER->auth);
         if ($userauth->can_change_password() and !$preventredirect) {
-            $SESSION->wantsurl = $FULLME;
+            if ($setwantsurltome) {
+                $SESSION->wantsurl = $FULLME;
+            }
             if ($changeurl = $userauth->change_password_url()) {
                 //use plugin custom url
                 redirect($changeurl);
@@ -2433,7 +2462,9 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
         if ($preventredirect) {
             throw new require_login_exception('User not fully set-up');
         }
-        $SESSION->wantsurl = $FULLME;
+        if ($setwantsurltome) {
+            $SESSION->wantsurl = $FULLME;
+        }
         redirect($CFG->wwwroot .'/user/edit.php?id='. $USER->id .'&amp;course='. SITEID);
     }
 
@@ -2453,13 +2484,17 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
             if ($preventredirect) {
                 throw new require_login_exception('Policy not agreed');
             }
-            $SESSION->wantsurl = $FULLME;
+            if ($setwantsurltome) {
+                $SESSION->wantsurl = $FULLME;
+            }
             redirect($CFG->wwwroot .'/user/policy.php');
         } else if (!empty($CFG->sitepolicyguest) and isguestuser()) {
             if ($preventredirect) {
                 throw new require_login_exception('Policy not agreed');
             }
-            $SESSION->wantsurl = $FULLME;
+            if ($setwantsurltome) {
+                $SESSION->wantsurl = $FULLME;
+            }
             redirect($CFG->wwwroot .'/user/policy.php');
         }
     }
@@ -2496,6 +2531,10 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
                 if ($preventredirect) {
                     throw new require_login_exception('Course is hidden');
                 }
+                // We need to override the navigation URL as the course won't have
+                // been added to the navigation and thus the navigation will mess up
+                // when trying to find it.
+                navigation_node::override_active_url(new moodle_url('/'));
                 notice(get_string('coursehidden'), $CFG->wwwroot .'/');
             }
         }
@@ -2527,7 +2566,11 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
 
         $access = false;
 
-        if (is_viewing($coursecontext, $USER)) {
+        if (is_role_switched($course->id)) {
+            // ok, user had to be inside this course before the switch
+            $access = true;
+
+        } else if (is_viewing($coursecontext, $USER)) {
             // ok, no need to mess with enrol
             $access = true;
 
@@ -2618,7 +2661,9 @@ function require_login($courseorid = NULL, $autologinguest = true, $cm = NULL, $
             if ($preventredirect) {
                 throw new require_login_exception('Not enrolled');
             }
-            $SESSION->wantsurl = $FULLME;
+            if ($setwantsurltome) {
+                $SESSION->wantsurl = $FULLME;
+            }
             redirect($CFG->wwwroot .'/enrol/index.php?id='. $course->id);
         }
     }
@@ -3292,7 +3337,8 @@ function create_user_record($username, $password, $auth = 'manual') {
     }
     $newuser->confirmed = 1;
     $newuser->lastip = getremoteaddr();
-    $newuser->timemodified = time();
+    $newuser->timecreated = time();
+    $newuser->timemodified = $newuser->timecreated;
     $newuser->mnethostid = $CFG->mnet_localhost_id;
 
     $newuser->id = $DB->insert_record('user', $newuser);
@@ -3355,6 +3401,7 @@ function update_user_record($username) {
         }
         if ($newuser) {
             $newuser['id'] = $oldinfo->id;
+            $newuser['timemodified'] = time();
             $DB->update_record('user', $newuser);
             // fetch full user record for the event, the complete user data contains too much info
             // and we want to be consistent with other places that trigger this event
@@ -3457,6 +3504,12 @@ function delete_user($user) {
     // last course access not necessary either
     $DB->delete_records('user_lastaccess', array('userid'=>$user->id));
 
+    // remove all user tokens
+    $DB->delete_records('external_tokens', array('userid'=>$user->id));
+
+    // unauthorise the user for all services
+    $DB->delete_records('external_services_users', array('userid'=>$user->id));
+
     // now do a final accesslib cleanup - removes all role assignments in user context and context itself
     delete_context(CONTEXT_USER, $user->id);
 
@@ -3476,6 +3529,9 @@ function delete_user($user) {
     $updateuser->timemodified = time();
 
     $DB->update_record('user', $updateuser);
+    // Add this action to log
+    add_to_log(SITEID, 'user', 'delete', "view.php?id=$user->id", $user->firstname.' '.$user->lastname);
+
 
     // notify auth plugin - do not block the delete even when plugin fails
     $authplugin = get_auth_plugin($user->auth);
@@ -3583,8 +3639,12 @@ function authenticate_user_login($username, $password) {
                 $user = update_user_record($username);
             }
         } else {
-            // if user not found, create him
-            $user = create_user_record($username, $password, $auth);
+            // if user not found and user creation is not disabled, create it
+            if (empty($CFG->authpreventaccountcreation)) {
+                $user = create_user_record($username, $password, $auth);
+            } else {
+                continue;
+            }
         }
 
         $authplugin->sync_roles($user);
@@ -4587,19 +4647,31 @@ function email_to_user($user, $from, $subject, $messagetext, $messagehtml='', $a
     global $CFG, $FULLME;
 
     if (empty($user) || empty($user->email)) {
-        mtrace('Error: lib/moodlelib.php email_to_user(): User is null or has no email');
+        $nulluser = 'User is null or has no email';
+        error_log($nulluser);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$nulluser);
+        }
         return false;
     }
 
     if (!empty($user->deleted)) {
-        // do not mail delted users
-        mtrace('Error: lib/moodlelib.php email_to_user(): User is deleted');
+        // do not mail deleted users
+        $userdeleted = 'User is deleted';
+        error_log($userdeleted);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$userdeleted);
+        }
         return false;
     }
 
     if (!empty($CFG->noemailever)) {
         // hidden setting for development sites, set in config.php if needed
-        mtrace('Error: lib/moodlelib.php email_to_user(): Not sending email due to noemailever config setting');
+        $noemail = 'Not sending email due to noemailever config setting';
+        error_log($noemail);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$noemail);
+        }
         return true;
     }
 
@@ -4610,14 +4682,26 @@ function email_to_user($user, $from, $subject, $messagetext, $messagehtml='', $a
     }
 
     // skip mail to suspended users
-    if (isset($user->auth) && $user->auth=='nologin') {
+    if ((isset($user->auth) && $user->auth=='nologin') or (isset($user->suspended) && $user->suspended)) {
         return true;
+    }
+
+    if (!validate_email($user->email)) {
+        // we can not send emails to invalid addresses - it might create security issue or confuse the mailer
+        $invalidemail = "User $user->id (".fullname($user).") email ($user->email) is invalid! Not sending.";
+        error_log($invalidemail);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$invalidemail);
+        }
+        return false;
     }
 
     if (over_bounce_threshold($user)) {
         $bouncemsg = "User $user->id (".fullname($user).") is over bounce threshold! Not sending.";
         error_log($bouncemsg);
-        mtrace('Error: lib/moodlelib.php email_to_user(): '.$bouncemsg);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$bouncemsg);
+        }
         return false;
     }
 
@@ -4761,8 +4845,10 @@ function email_to_user($user, $from, $subject, $messagetext, $messagehtml='', $a
         }
         return true;
     } else {
-        mtrace('ERROR: '. $mail->ErrorInfo);
         add_to_log(SITEID, 'library', 'mailer', $FULLME, 'ERROR: '. $mail->ErrorInfo);
+        if (CLI_SCRIPT) {
+            mtrace('Error: lib/moodlelib.php email_to_user(): '.$mail->ErrorInfo);
+        }
         if (!empty($mail->SMTPDebug)) {
             echo '</pre>';
         }
@@ -4916,7 +5002,9 @@ function reset_password_and_mail($user) {
 
     $subject = get_string('emailconfirmationsubject', '', format_string($site->fullname));
 
-    $data->link  = $CFG->wwwroot .'/login/confirm.php?data='. $user->secret .'/'. urlencode($user->username);
+    $username = urlencode($user->username);
+    $username = str_replace('.', '%2E', $username); // prevent problems with trailing dots
+    $data->link  = $CFG->wwwroot .'/login/confirm.php?data='. $user->secret .'/'. $username;
     $message     = get_string('emailconfirmation', '', $data);
     $messagehtml = text_to_html(get_string('emailconfirmation', '', $data), false, false, true);
 
@@ -6800,12 +6888,17 @@ class emoticon_manager {
  *
  * @todo Finish documenting this function
  *
- * @param string $data Data to encrypt
- * @return string The now encrypted data
+ * @param string $data        Data to encrypt.
+ * @param bool $usesecurekey  Lets us know if we are using the old or new password.
+ * @return string             The now encrypted data.
  */
-function rc4encrypt($data) {
-    $password = 'nfgjeingjk';
-    return endecrypt($password, $data, '');
+function rc4encrypt($data, $usesecurekey = false) {
+    if (!$usesecurekey) {
+        $passwordkey = 'nfgjeingjk';
+    } else {
+        $passwordkey = get_site_identifier();
+    }
+    return endecrypt($passwordkey, $data, '');
 }
 
 /**
@@ -6813,12 +6906,17 @@ function rc4encrypt($data) {
  *
  * @todo Finish documenting this function
  *
- * @param string $data Data to decrypt
- * @return string The now decrypted data
+ * @param string $data        Data to decrypt.
+ * @param bool $usesecurekey  Lets us know if we are using the old or new password.
+ * @return string             The now decrypted data.
  */
-function rc4decrypt($data) {
-    $password = 'nfgjeingjk';
-    return endecrypt($password, $data, 'de');
+function rc4decrypt($data, $usesecurekey = false) {
+    if (!$usesecurekey) {
+        $passwordkey = 'nfgjeingjk';
+    } else {
+        $passwordkey = get_site_identifier();
+    }
+    return endecrypt($passwordkey, $data, 'de');
 }
 
 /**
@@ -7048,7 +7146,6 @@ function get_core_subsystems() {
             'langconfig'  => NULL,
             'license'     => NULL,
             'mathslib'    => NULL,
-            'message'     => 'message',
             'message'     => 'message',
             'mimetypes'   => NULL,
             'mnet'        => 'mnet',
@@ -7304,32 +7401,66 @@ function get_list_of_plugins($directory='mod', $exclude='', $basedir='') {
     return $plugins;
 }
 
+/**
+* Invoke plugin's callback functions
+*
+* @param string $type plugin type e.g. 'mod'
+* @param string $name plugin name
+* @param string $feature feature name
+* @param string $action feature's action
+* @param array $params parameters of callback function, should be an array
+* @param mixed $default default value if callback function hasn't been defined, or if it retursn null.
+* @return mixed
+*
+* @todo Decide about to deprecate and drop plugin_callback() - MDL-30743
+*/
+function plugin_callback($type, $name, $feature, $action, $params = null, $default = null) {
+    return component_callback($type . '_' . $name, $feature . '_' . $action, (array) $params, $default);
+}
 
 /**
- * invoke plugin's callback functions
+ * Invoke component's callback functions
  *
- * @param string $type Plugin type e.g. 'mod'
- * @param string $name Plugin name
- * @param string $feature Feature code (FEATURE_xx constant)
- * @param string $action Feature's action
- * @param string $options parameters of callback function, should be an array
- * @param mixed $default default value if callback function hasn't been defined
+ * @param string $component frankenstyle component name, e.g. 'mod_quiz'
+ * @param string $function the rest of the function name, e.g. 'cron' will end up calling 'mod_quiz_cron'
+ * @param array $params parameters of callback function
+ * @param mixed $default default value if callback function hasn't been defined, or if it retursn null.
  * @return mixed
  */
-function plugin_callback($type, $name, $feature, $action, $options = null, $default=null) {
-    global $CFG;
+function component_callback($component, $function, array $params = array(), $default = null) {
+    global $CFG; // this is needed for require_once() below
 
-    $name = clean_param($name, PARAM_SAFEDIR);
-    $function = $name.'_'.$feature.'_'.$action;
-    $file = get_component_directory($type . '_' . $name) . '/lib.php';
+    $cleancomponent = clean_param($component, PARAM_SAFEDIR);
+    if (empty($cleancomponent)) {
+        throw new coding_exception('Invalid component used in plugin/component_callback():' . $component);
+    }
+    $component = $cleancomponent;
+
+    list($type, $name) = normalize_component($component);
+    $component = $type . '_' . $name;
+
+    $oldfunction = $name.'_'.$function;
+    $function = $component.'_'.$function;
+
+    $dir = get_component_directory($component);
+    if (empty($dir)) {
+        throw new coding_exception('Invalid component used in plugin/component_callback():' . $component);
+    }
 
     // Load library and look for function
-    if (file_exists($file)) {
-        require_once($file);
+    if (file_exists($dir.'/lib.php')) {
+        require_once($dir.'/lib.php');
     }
+
+    if (!function_exists($function) and function_exists($oldfunction)) {
+        // In Moodle 2.2 and greater this will result in a debugging notice however
+        // for 2.1+ we tolerate it.
+        $function = $oldfunction;
+    }
+
     if (function_exists($function)) {
         // Function exists, so just return function result
-        $ret = call_user_func_array($function, (array)$options);
+        $ret = call_user_func_array($function, $params);
         if (is_null($ret)) {
             return $default;
         } else {
@@ -7658,18 +7789,19 @@ function get_device_type() {
     }
 
     //mobile detection PHP direct copy from open source detectmobilebrowser.com
-    $phonesregex = '/android|avantgo|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|symbian|treo|up\.(browser|link)|vodafone|wap|windows (ce|phone)|xda|xiino/i';
+    $phonesregex = '/android .+ mobile|avantgo|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|symbian|treo|up\.(browser|link)|vodafone|wap|windows (ce|phone)|xda|xiino/i';
     $modelsregex = '/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|e\-|e\/|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(di|rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|xda(\-|2|g)|yas\-|your|zeto|zte\-/i';
     if (preg_match($phonesregex,$useragent) || preg_match($modelsregex,substr($useragent, 0, 4))){
         return 'mobile';
     }
 
-    $tabletregex = '/Tablet browser|iPad|iProd|GT-P1000|GT-I9000|SHW-M180S|SGH-T849|SCH-I800|Build\/ERE27|sholest/i';
+    $tabletregex = '/Tablet browser|android|iPad|iProd|GT-P1000|GT-I9000|SHW-M180S|SGH-T849|SCH-I800|Build\/ERE27|sholest/i';
     if (preg_match($tabletregex, $useragent)) {
          return 'tablet';
     }
 
-    if (strpos($_SERVER['HTTP_USER_AGENT'], 'MSIE 6.') !== false) {
+    // Safe way to check for IE6 and not get false positives for some IE 7/8 users
+    if (substr($_SERVER['HTTP_USER_AGENT'], 0, 34) === 'Mozilla/4.0 (compatible; MSIE 6.0;') {
         return 'legacy';
     }
 
@@ -7991,7 +8123,12 @@ function upgrade_set_timeout($max_execution_time=300) {
         return;
     }
 
-    set_time_limit($max_execution_time);
+    if (CLI_SCRIPT) {
+        // there is no point in timing out of CLI scripts, admins can stop them if necessary
+        set_time_limit(0);
+    } else {
+        set_time_limit($max_execution_time);
+    }
     set_config('upgraderunning', $expected_end); // keep upgrade locked until this time
 }
 
@@ -8007,14 +8144,24 @@ function upgrade_set_timeout($max_execution_time=300) {
  * @global object
  * @global object
  * @uses HOURSECS
+ * @return bool True if executed, false if not
  */
 function notify_login_failures() {
     global $CFG, $DB, $OUTPUT;
 
-    $recip = get_users_from_config($CFG->notifyloginfailures, 'moodle/site:config');
+    if (empty($CFG->notifyloginfailures)) {
+        return false;
+    }
 
     if (empty($CFG->lastnotifyfailure)) {
         $CFG->lastnotifyfailure=0;
+    }
+
+    $recip = get_users_from_config($CFG->notifyloginfailures, 'moodle/site:config');
+
+    // If it has been less than an hour, or if there are no recipients, don't execute.
+    if (((time() - HOURSECS) < $CFG->lastnotifyfailure) || !is_array($recip) || count($recip) <= 0) {
+        return false;
     }
 
     // we need to deal with the threshold stuff first.
@@ -8058,7 +8205,8 @@ function notify_login_failures() {
 
 /// Now, select all the login error logged records belonging to the ips and infos
 /// since lastnotifyfailure, that we have stored in the cache_flags table
-    $sql = "SELECT l.*, u.firstname, u.lastname
+    $sql = "SELECT * FROM (
+        SELECT l.*, u.firstname, u.lastname
               FROM {log} l
               JOIN {cache_flags} cf ON l.ip = cf.name
          LEFT JOIN {user} u         ON l.userid = u.id
@@ -8072,8 +8220,8 @@ function notify_login_failures() {
          LEFT JOIN {user} u         ON l.userid = u.id
              WHERE l.module = 'login' AND l.action = 'error'
                    AND l.time > ?
-                   AND cf.flagtype = 'login_failure_by_info'
-          ORDER BY time DESC";
+                   AND cf.flagtype = 'login_failure_by_info') t
+        ORDER BY t.time DESC";
     $params = array($CFG->lastnotifyfailure, $CFG->lastnotifyfailure);
 
 /// Init some variables
@@ -8088,10 +8236,8 @@ function notify_login_failures() {
     }
     $rs->close();
 
-/// If we haven't run in the last hour and
-/// we have something useful to report and we
-/// are actually supposed to be reporting to somebody
-    if ((time() - HOURSECS) > $CFG->lastnotifyfailure && $count > 0 && is_array($recip) && count($recip) > 0) {
+    // If we have something useful to report.
+    if ($count > 0) {
         $site = get_site();
         $subject = get_string('notifyloginfailuressubject', '', format_string($site->fullname));
     /// Calculate the complete body of notification (start + messages + end)
@@ -8106,13 +8252,15 @@ function notify_login_failures() {
             //emailing the admins directly rather than putting these through the messaging system
             email_to_user($admin,get_admin(), $subject, $body);
         }
-
-    /// Update lastnotifyfailure with current time
-        set_config('lastnotifyfailure', time());
     }
+
+    // Update lastnotifyfailure with current time.
+    set_config('lastnotifyfailure', time());
 
 /// Finally, delete all the temp records we have created in cache_flags
     $DB->delete_records_select('cache_flags', "flagtype IN ('login_failure_by_ip', 'login_failure_by_info')");
+
+    return true;
 }
 
 /**
@@ -8448,12 +8596,17 @@ function generate_password($maxlen=10) {
         $filler1 = $fillers[rand(0, strlen($fillers) - 1)];
         $password = $word1 . $filler1 . $word2;
     } else {
-        $maxlen = !empty($CFG->minpasswordlength) ? $CFG->minpasswordlength : 0;
+        $minlen = !empty($CFG->minpasswordlength) ? $CFG->minpasswordlength : 0;
         $digits = $CFG->minpassworddigits;
         $lower = $CFG->minpasswordlower;
         $upper = $CFG->minpasswordupper;
         $nonalphanum = $CFG->minpasswordnonalphanum;
-        $additional = $maxlen - ($lower + $upper + $digits + $nonalphanum);
+        $total = $lower + $upper + $digits + $nonalphanum;
+        // minlength should be the greater one of the two ( $minlen and $total )
+        $minlen = $minlen < $total ? $total : $minlen;
+        // maxlen can never be smaller than minlen
+        $maxlen = $minlen > $maxlen ? $minlen : $maxlen;
+        $additional = $maxlen - $total;
 
         // Make sure we have enough characters to fulfill
         // complexity requirements
@@ -9292,11 +9445,13 @@ function message_popup_window() {
     }
 
     //got unread messages so now do another query that joins with the user table
-    $messagesql = "SELECT m.id, m.smallmessage, m.notification, u.firstname, u.lastname FROM {message} m
-JOIN {message_working} mw ON m.id=mw.unreadmessageid
-JOIN {message_processors} p ON mw.processorid=p.id
-JOIN {user} u ON m.useridfrom=u.id
-WHERE m.useridto = :userid AND p.name='popup'";
+    $messagesql = "SELECT m.id, m.smallmessage, m.fullmessageformat, m.notification, u.firstname, u.lastname
+                     FROM {message} m
+                     JOIN {message_working} mw ON m.id=mw.unreadmessageid
+                     JOIN {message_processors} p ON mw.processorid=p.id
+                     JOIN {user} u ON m.useridfrom=u.id
+                    WHERE m.useridto = :userid
+                      AND p.name='popup'";
 
     //if the user was last notified over an hour ago we can renotify them of old messages
     //so don't worry about when the new message was sent
@@ -9325,11 +9480,19 @@ WHERE m.useridto = :userid AND p.name='popup'";
             $smallmessage = null;
             if (!empty($message_users->smallmessage)) {
                 //display the first 200 chars of the message in the popup
+                $textlib = textlib_get_instance();
                 $smallmessage = null;
-                if (strlen($message_users->smallmessage>200)) {
-                    $smallmessage = substr($message_users->smallmessage,0,200).'...';
+                if ($textlib->strlen($message_users->smallmessage) > 200) {
+                    $smallmessage = $textlib->substr($message_users->smallmessage,0,200).'...';
                 } else {
                     $smallmessage = $message_users->smallmessage;
+                }
+
+                //prevent html symbols being displayed
+                if ($message_users->fullmessageformat == FORMAT_HTML) {
+                    $smallmessage = html_to_text($smallmessage);
+                } else {
+                    $smallmessage = s($smallmessage);
                 }
             } else if ($message_users->notification) {
                 //its a notification with no smallmessage so just say they have a notification

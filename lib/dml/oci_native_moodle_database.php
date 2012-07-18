@@ -303,7 +303,7 @@ class oci_native_moodle_database extends moodle_database {
         if (preg_match_all('/\{([a-z][a-z0-9_]*)\}/', $sql, $matches)) {
             foreach($matches[0] as $key=>$match) {
                 $name = $matches[1][$key];
-                if ($this->temptables->is_temptable($name)) {
+                if ($this->temptables && $this->temptables->is_temptable($name)) {
                     $sql = str_replace($match, $this->temptables->get_correct_name($name), $sql);
                 } else {
                     $sql = str_replace($match, $this->prefix.$name, $sql);
@@ -364,11 +364,23 @@ class oci_native_moodle_database extends moodle_database {
         if (empty($params)) {
             return array($sql, $params);
         }
+
         $newparams = array();
-        foreach ($params as $name=>$value) {
-            $newparams['o_'.$name] = $value;
+        $searcharr = array(); // search => replace pairs
+        foreach ($params as $name => $value) {
+            // Keep the name within the 30 chars limit always (prefixing/replacing)
+            if (strlen($name) <= 28) {
+                $newname = 'o_' . $name;
+            } else {
+                $newname = 'o_' . substr($name, 2);
+            }
+            $newparams[$newname] = $value;
+            $searcharr[':' . $name] = ':' . $newname;
         }
-        $sql = preg_replace('/:([a-z0-9_-]+[$a-z0-9_-])/', ':o_$1', $sql);
+        // sort by length desc to avoid potential str_replace() overlap
+        uksort($searcharr, array('oci_native_moodle_database', 'compare_by_length_desc'));
+
+        $sql = str_replace(array_keys($searcharr), $searcharr, $sql);
         return array($sql, $newparams);
     }
 
@@ -822,6 +834,17 @@ class oci_native_moodle_database extends moodle_database {
     }
 
     /**
+     * Helper function to order by string length desc
+     *
+     * @param $a string first element to compare
+     * @param $b string second element to compare
+     * @return int < 0 $a goes first (is less), 0 $b goes first, 0 doesn't matter
+     */
+    private function compare_by_length_desc($a, $b) {
+        return strlen($b) - strlen($a);
+    }
+
+    /**
      * Is db in unicode mode?
      * @return bool
      */
@@ -952,7 +975,7 @@ class oci_native_moodle_database extends moodle_database {
 
     /**
      * Execute general sql query. Should be used only when no other method suitable.
-     * Do NOT use this to make changes in db structure, use database_manager::execute_sql() instead!
+     * Do NOT use this to make changes in db structure, use database_manager methods instead!
      * @param string $sql query
      * @param array $params query parameters
      * @return bool true
@@ -1164,12 +1187,13 @@ class oci_native_moodle_database extends moodle_database {
 
         $id = null;
 
-        list($sql, $params) = $this->tweak_param_names($sql, $params);
+        // note we don't need tweak_param_names() here. Placeholders are safe column names. MDL-28080
+        // list($sql, $params) = $this->tweak_param_names($sql, $params);
         $this->query_start($sql, $params, SQL_QUERY_INSERT);
         $stmt = $this->parse_query($sql);
         $descriptors = $this->bind_params($stmt, $params, $table);
         if ($returning) {
-            oci_bind_by_name($stmt, ":o_oracle_id", $id, 10, SQLT_INT); // :o_ prefix added in tweak_param_names()
+            oci_bind_by_name($stmt, ":oracle_id", $id, 10, SQLT_INT);
         }
         $result = oci_execute($stmt, $this->commit_status);
         $this->free_descriptors($descriptors);
@@ -1276,7 +1300,8 @@ class oci_native_moodle_database extends moodle_database {
         $sql = "UPDATE {" . $table . "} SET $sets WHERE id=:id";
         list($sql, $params, $type) = $this->fix_sql_params($sql, $params);
 
-        list($sql, $params) = $this->tweak_param_names($sql, $params);
+        // note we don't need tweak_param_names() here. Placeholders are safe column names. MDL-28080
+        // list($sql, $params) = $this->tweak_param_names($sql, $params);
         $this->query_start($sql, $params, SQL_QUERY_UPDATE);
         $stmt = $this->parse_query($sql);
         $descriptors = $this->bind_params($stmt, $params, $table);
@@ -1582,19 +1607,28 @@ class oci_native_moodle_database extends moodle_database {
         return $this->dblocks_supported;
     }
 
-    public function get_session_lock($rowid) {
+    /**
+     * Obtain session lock
+     * @param int $rowid id of the row with session record
+     * @param int $timeout max allowed time to wait for the lock in seconds
+     * @return bool success
+     */
+    public function get_session_lock($rowid, $timeout) {
         if (!$this->session_lock_supported()) {
             return;
         }
-        parent::get_session_lock($rowid);
+        parent::get_session_lock($rowid, $timeout);
 
         $fullname = $this->dbname.'-'.$this->prefix.'-session-'.$rowid;
         $sql = 'SELECT MOODLE_LOCKS.GET_LOCK(:lockname, :locktimeout) FROM DUAL';
-        $params = array('lockname' => $fullname , 'locktimeout' => 120);
+        $params = array('lockname' => $fullname , 'locktimeout' => $timeout);
         $this->query_start($sql, $params, SQL_QUERY_AUX);
         $stmt = $this->parse_query($sql);
         $this->bind_params($stmt, $params);
         $result = oci_execute($stmt, $this->commit_status);
+        if ($result === false) { // Any failure in get_lock() raises error, causing return of bool false
+            throw new dml_sessionwait_exception();
+        }
         $this->query_end($result, $stmt);
         oci_free_statement($stmt);
     }

@@ -47,6 +47,7 @@ if ($context->contextlevel == CONTEXT_COURSECAT) {
 }
 
 $manager = has_capability('moodle/cohort:manage', $context);
+$canassign = has_capability('moodle/cohort:assign', $context);
 if (!$manager) {
     require_capability('moodle/cohort:view', $context);
 }
@@ -75,7 +76,7 @@ $data = array();
 foreach($cohorts as $cohort) {
     $line = array();
     $line[] = format_string($cohort->name);
-    $line[] = $cohort->idnumber;
+    $line[] = s($cohort->idnumber); // plain text
     $line[] = format_text($cohort->description, $cohort->descriptionformat);
 
     $line[] = $DB->count_records('cohort_members', array('cohortid'=>$cohort->id));
@@ -86,18 +87,17 @@ foreach($cohorts as $cohort) {
         $line[] = get_string('pluginname', $cohort->component);
     }
 
-    if ($manager) {
-        if (empty($cohort->component)) {
-            $buttons = html_writer::link(new moodle_url('/cohort/edit.php', array('id'=>$cohort->id)), get_string('edit'));
-            $buttons .= ' '.html_writer::link(new moodle_url('/cohort/edit.php', array('id'=>$cohort->id, 'delete'=>1)), get_string('delete'));
-            $buttons .= ' '.html_writer::link(new moodle_url('/cohort/assign.php', array('id'=>$cohort->id)), get_string('assign', 'cohort'));
-        } else {
-            $buttons = '';
+    $buttons = array();
+    if (empty($cohort->component)) {
+        if ($manager) {
+            $buttons[] = html_writer::link(new moodle_url('/cohort/edit.php', array('id'=>$cohort->id, 'delete'=>1)), html_writer::empty_tag('img', array('src'=>$OUTPUT->pix_url('t/delete'), 'alt'=>get_string('delete'), 'class'=>'iconsmall')));
+            $buttons[] =  html_writer::link(new moodle_url('/cohort/edit.php', array('id'=>$cohort->id)), html_writer::empty_tag('img', array('src'=>$OUTPUT->pix_url('t/edit'), 'alt'=>get_string('edit'), 'class'=>'iconsmall')));
         }
-    } else {
-        $buttons = '';
+        if ($manager or $canassign) {
+            $buttons[] = html_writer::link(new moodle_url('/cohort/assign.php', array('id'=>$cohort->id)), html_writer::empty_tag('img', array('src'=>$OUTPUT->pix_url('i/users'), 'alt'=>get_string('assign', 'core_cohort'), 'class'=>'iconsmall')));
+        }
     }
-    $line[] = $buttons;
+    $line[] = implode(' ', $buttons);
 
     $data[] = $line;
 }

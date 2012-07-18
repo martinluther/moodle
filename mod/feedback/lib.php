@@ -98,6 +98,22 @@ function feedback_add_instance($feedback) {
 
     feedback_set_events($feedback);
 
+    if (!isset($feedback->coursemodule)) {
+        $cm = get_coursemodule_from_id('feedback', $feedback->id);
+        $feedback->coursemodule = $cm->id;
+    }
+    $context = get_context_instance(CONTEXT_MODULE, $feedback->coursemodule);
+
+    $editoroptions = feedback_get_editor_options();
+
+    // process the custom wysiwyg editor in page_after_submit
+    if ($draftitemid = $feedback->page_after_submit_editor['itemid']) {
+        $feedback->page_after_submit = file_save_draft_area_files($draftitemid, $context->id, 'mod_feedback', 'page_after_submit',
+                0, $editoroptions, $feedback->page_after_submit_editor['text']);
+        $feedback->page_after_submitformat = $feedback->page_after_submit_editor['format'];
+    }
+    $DB->update_record('feedback', $feedback);
+
     return $feedbackid;
 }
 
@@ -131,6 +147,18 @@ function feedback_update_instance($feedback) {
     //create or update the new events
     feedback_set_events($feedback);
 
+    $context = get_context_instance(CONTEXT_MODULE, $feedback->coursemodule);
+
+    $editoroptions = feedback_get_editor_options();
+
+    // process the custom wysiwyg editor in page_after_submit
+    if ($draftitemid = $feedback->page_after_submit_editor['itemid']) {
+        $feedback->page_after_submit = file_save_draft_area_files($draftitemid, $context->id, 'mod_feedback', 'page_after_submit',
+                0, $editoroptions, $feedback->page_after_submit_editor['text']);
+        $feedback->page_after_submitformat = $feedback->page_after_submit_editor['format'];
+    }
+    $DB->update_record('feedback', $feedback);
+
     return true;
 }
 
@@ -148,42 +176,87 @@ function feedback_update_instance($feedback) {
 function feedback_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
     global $CFG, $DB;
 
-    require_login($course, false, $cm);
-
-    $itemid = (int)array_shift($args);
-
-    require_course_login($course, true, $cm);
-
-    if (!$item = $DB->get_record('feedback_item', array('id'=>$itemid))) {
-        return false;
+    if ($filearea === 'item' or $filearea === 'template') {
+        $itemid = (int)array_shift($args);
+        //get the item what includes the file
+        if (!$item = $DB->get_record('feedback_item', array('id'=>$itemid))) {
+            return false;
+        }
+        $feedbackid = $item->feedback;
+        $templateid = $item->template;
     }
 
-    if (!has_capability('mod/feedback:view', $context)) {
+    if ($filearea === 'page_after_submit' or $filearea === 'item') {
+        if (! $feedback = $DB->get_record("feedback", array("id"=>$cm->instance))) {
+            return false;
+        }
+
+        $feedbackid = $feedback->id;
+
+        //if the filearea is "item" so we check the permissions like view/complete the feedback
+        $canload = false;
+        //first check whether the user has the complete capability
+        if (has_capability('mod/feedback:complete', $context)) {
+            $canload = true;
+        }
+
+        //now we check whether the user has the view capability
+        if (has_capability('mod/feedback:view', $context)) {
+            $canload = true;
+        }
+
+        //if the feedback is on frontpage and anonymous and the fullanonymous is allowed
+        //so the file can be loaded too.
+        if (isset($CFG->feedback_allowfullanonymous)
+                    AND $CFG->feedback_allowfullanonymous
+                    AND $course->id == SITEID
+                    AND $feedback->anonymous == FEEDBACK_ANONYMOUS_YES ) {
+            $canload = true;
+        }
+
+        if (!$canload) {
+            return false;
+        }
+    } else if ($filearea === 'template') { //now we check files in templates
+        if (!$template = $DB->get_record('feedback_template', array('id'=>$templateid))) {
+            return false;
+        }
+
+        //if the file is not public so the capability edititems has to be there
+        if (!$template->ispublic) {
+            if (!has_capability('mod/feedback:edititems', $context)) {
+                return false;
+            }
+        } else { //on public templates, at least the user has to be logged in
+            if (!isloggedin()) {
+                return false;
+            }
+        }
+    } else {
         return false;
     }
 
     if ($context->contextlevel == CONTEXT_MODULE) {
-        if ($filearea !== 'item') {
-            return false;
-        }
-
-        if ($item->feedback == $cm->instance) {
-            $filecontext = $context;
-        } else {
+        if ($filearea !== 'item' and $filearea !== 'page_after_submit') {
             return false;
         }
     }
 
-    if ($context->contextlevel == CONTEXT_COURSE) {
+    if ($context->contextlevel == CONTEXT_COURSE || $context->contextlevel == CONTEXT_SYSTEM) {
         if ($filearea !== 'template') {
             return false;
         }
     }
 
     $relativepath = implode('/', $args);
-    $fullpath = "/$context->id/mod_feedback/$filearea/$itemid/$relativepath";
+    if ($filearea === 'page_after_submit') {
+        $fullpath = "/{$context->id}/mod_feedback/$filearea/$relativepath";
+    } else {
+        $fullpath = "/{$context->id}/mod_feedback/$filearea/{$item->id}/$relativepath";
+    }
 
     $fs = get_file_storage();
+
     if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
         return false;
     }
@@ -193,7 +266,6 @@ function feedback_pluginfile($course, $cm, $context, $filearea, $args, $forcedow
 
     return false;
 }
-
 
 /**
  * this will delete a given instance.
@@ -636,6 +708,16 @@ function feedback_reset_course_form($course) {
 }
 
 /**
+ * This gets an array with default options for the editor
+ *
+ * @return array the options
+ */
+function feedback_get_editor_options() {
+    return array('maxfiles' => EDITOR_UNLIMITED_FILES,
+                'trusttext'=>true);
+}
+
+/**
  * This creates new events given as timeopen and closeopen by $feedback.
  *
  * @global object
@@ -654,8 +736,8 @@ function feedback_set_events($feedback) {
     }
 
     // the open-event
-    if($feedback->timeopen > 0) {
-        $event = NULL;
+    if ($feedback->timeopen > 0) {
+        $event = new stdClass();
         $event->name         = get_string('start', 'feedback').' '.$feedback->name;
         $event->description  = format_module_intro('feedback', $feedback, $feedback->coursemodule);
         $event->courseid     = $feedback->course;
@@ -676,8 +758,8 @@ function feedback_set_events($feedback) {
     }
 
     // the close-event
-    if($feedback->timeclose > 0) {
-        $event = NULL;
+    if ($feedback->timeclose > 0) {
+        $event = new stdClass();
         $event->name         = get_string('stop', 'feedback').' '.$feedback->name;
         $event->description  = format_module_intro('feedback', $feedback, $feedback->coursemodule);
         $event->courseid     = $feedback->course;
@@ -879,8 +961,11 @@ function feedback_get_complete_users($cm, $group = false, $where = '', array $pa
     }
 
     $ufields = user_picture::fields('u');
-    $sql = 'SELECT DISTINCT '.$ufields.' FROM {user} u, {feedback_completed} c '.$fromgroup.'
-              WHERE '.$where.' anonymous_response = :anon AND u.id = c.userid AND c.feedback = :instance
+    $sql = 'SELECT DISTINCT '.$ufields.', c.timemodified as completed_timemodified
+            FROM {user} u, {feedback_completed} c '.$fromgroup.'
+            WHERE '.$where.' anonymous_response = :anon
+                AND u.id = c.userid
+                AND c.feedback = :instance
               '.$wheregroup.$sortsql;
 
     if ($startpage === false OR $pagecount === false) {
@@ -1843,6 +1928,17 @@ function feedback_get_page_to_continue($feedbackid, $courseid = false, $guestid 
 ////////////////////////////////////////////////
 
 /**
+ * cleans the userinput while submitting the form.
+ *
+ * @param mixed $value
+ * @return mixed
+ */
+function feedback_clean_input_value($item, $value) {
+    $itemobj = feedback_get_item_class($item->typ);
+    return $itemobj->clean_input_value($value);
+}
+
+/**
  * this saves the values of an completed.
  * if the param $tmp is set true so the values are saved temporary in table feedback_valuetmp.
  * if there is already a completed and the userid is set so the values are updated.
@@ -2683,7 +2779,9 @@ function feedback_send_email_anonym($cm, $feedback, $course) {
  * @return string the text you want to post
  */
 function feedback_send_email_text($info, $course) {
-    $posttext  = $course->shortname.' -> '.get_string('modulenameplural', 'feedback').' -> '.
+    $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+    $courseshortname = format_string($course->shortname, true, array('context' => $coursecontext));
+    $posttext  = $courseshortname.' -> '.get_string('modulenameplural', 'feedback').' -> '.
                     $info->feedback."\n";
     $posttext .= '---------------------------------------------------------------------'."\n";
     $posttext .= get_string("emailteachermail", "feedback", $info)."\n";
@@ -2702,8 +2800,11 @@ function feedback_send_email_text($info, $course) {
  */
 function feedback_send_email_html($info, $course, $cm) {
     global $CFG;
+    $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+    $courseshortname = format_string($course->shortname, true, array('context' => $coursecontext));
+
     $posthtml  = '<p><font face="sans-serif">'.
-                '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$course->id.'">'.$course->shortname.'</a> ->'.
+                '<a href="'.$CFG->wwwroot.'/course/view.php?id='.$course->id.'">'.$courseshortname.'</a> ->'.
                 '<a href="'.$CFG->wwwroot.'/mod/feedback/index.php?id='.$course->id.'">'.get_string('modulenameplural', 'feedback').'</a> ->'.
                 '<a href="'.$CFG->wwwroot.'/mod/feedback/view.php?id='.$cm->id.'">'.$info->feedback.'</a></font></p>';
     $posthtml .= '<hr /><font face="sans-serif">';

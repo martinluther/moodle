@@ -37,12 +37,12 @@
     $PAGE->set_pagelayout('popup');
     $PAGE->set_url('/course/info.php', array('id' => $course->id));
     $PAGE->set_title(get_string("summaryof", "", $course->fullname));
-    $PAGE->set_heading('Course info');
+    $PAGE->set_heading(get_string('courseinfo'));
     $PAGE->set_course($course);
     $PAGE->navbar->add(get_string('summary'));
 
     echo $OUTPUT->header();
-    echo $OUTPUT->heading('<a href="view.php?id='.$course->id.'">'.format_string($course->fullname) . '</a><br />(' . format_string($course->shortname) . ')');
+    echo $OUTPUT->heading('<a href="view.php?id='.$course->id.'">'.format_string($course->fullname) . '</a><br />(' . format_string($course->shortname, true, array('context' => $context)) . ')');
 
     // print enrol info
     if ($texts = enrol_get_course_description_texts($course)) {

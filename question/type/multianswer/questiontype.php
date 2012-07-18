@@ -75,6 +75,9 @@ class qtype_multianswer extends question_type {
             $question->options->questions[$sequence[$wrapped->id]] = $wrapped;
         }
 
+        $question->hints = $DB->get_records('question_hints',
+                array('questionid' => $question->id), 'id ASC');
+
         return true;
     }
 
@@ -141,14 +144,14 @@ class qtype_multianswer extends question_type {
             if ($previousid != 0 && $previousid != $wrapped->id) {
                 // for some reasons a new question has been created
                 // so delete the old one
-                delete_question($previousid);
+                question_delete_question($previousid);
             }
         }
 
         // Delete redundant wrapped questions
         if (is_array($oldwrappedquestions) && count($oldwrappedquestions)) {
             foreach ($oldwrappedquestions as $oldwrappedquestion) {
-                delete_question($oldwrappedquestion->id);
+                question_delete_question($oldwrappedquestion->id);
             }
         }
 
@@ -164,6 +167,8 @@ class qtype_multianswer extends question_type {
                 $DB->insert_record('question_multianswer', $multianswer);
             }
         }
+
+        $this->save_hints($question);
     }
 
     public function save_question($authorizedquestion, $form) {
@@ -220,6 +225,16 @@ class qtype_multianswer extends question_type {
                     $subqdata->qtype)->get_random_guess_score($subqdata);
         }
         return $fractionsum / $fractionmax;
+    }
+
+    public function move_files($questionid, $oldcontextid, $newcontextid) {
+        parent::move_files($questionid, $oldcontextid, $newcontextid);
+        $this->move_files_in_hints($questionid, $oldcontextid, $newcontextid);
+    }
+
+    protected function delete_files($questionid, $contextid) {
+        parent::delete_files($questionid, $contextid);
+        $this->delete_files_in_hints($questionid, $contextid);
     }
 }
 
@@ -284,7 +299,7 @@ function qtype_multianswer_extract_question($text) {
     $question->qtype = 'multianswer';
     $question->questiontext = $text;
     $question->generalfeedback['text'] = '';
-    $question->generalfeedback['format'] = '1';
+    $question->generalfeedback['format'] = FORMAT_HTML;
     $question->generalfeedback['itemid'] = '';
 
     $question->options->questions = array();
@@ -295,7 +310,7 @@ function qtype_multianswer_extract_question($text) {
             ++$positionkey) {
         $wrapped = new stdClass();
         $wrapped->generalfeedback['text'] = '';
-        $wrapped->generalfeedback['format'] = '1';
+        $wrapped->generalfeedback['format'] = FORMAT_HTML;
         $wrapped->generalfeedback['itemid'] = '';
         if (isset($answerregs[ANSWER_REGEX_NORM])&& $answerregs[ANSWER_REGEX_NORM]!== '') {
             $wrapped->defaultmark = $answerregs[ANSWER_REGEX_NORM];
@@ -307,7 +322,7 @@ function qtype_multianswer_extract_question($text) {
             $wrapped->multiplier = array();
             $wrapped->units      = array();
             $wrapped->instructions['text'] = '';
-            $wrapped->instructions['format'] = '1';
+            $wrapped->instructions['format'] = FORMAT_HTML;
             $wrapped->instructions['itemid'] = '';
         } else if (!empty($answerregs[ANSWER_REGEX_ANSWER_TYPE_SHORTANSWER])) {
             $wrapped->qtype = 'shortanswer';
@@ -321,13 +336,13 @@ function qtype_multianswer_extract_question($text) {
             $wrapped->shuffleanswers = 1;
             $wrapped->answernumbering = 0;
             $wrapped->correctfeedback['text'] = '';
-            $wrapped->correctfeedback['format'] = '1';
+            $wrapped->correctfeedback['format'] = FORMAT_HTML;
             $wrapped->correctfeedback['itemid'] = '';
             $wrapped->partiallycorrectfeedback['text'] = '';
-            $wrapped->partiallycorrectfeedback['format'] = '1';
+            $wrapped->partiallycorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->partiallycorrectfeedback['itemid'] = '';
             $wrapped->incorrectfeedback['text'] = '';
-            $wrapped->incorrectfeedback['format'] = '1';
+            $wrapped->incorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->incorrectfeedback['itemid'] = '';
             $wrapped->layout = qtype_multichoice_base::LAYOUT_DROPDOWN;
         } else if (!empty($answerregs[ANSWER_REGEX_ANSWER_TYPE_MULTICHOICE_REGULAR])) {
@@ -336,13 +351,13 @@ function qtype_multianswer_extract_question($text) {
             $wrapped->shuffleanswers = 0;
             $wrapped->answernumbering = 0;
             $wrapped->correctfeedback['text'] = '';
-            $wrapped->correctfeedback['format'] = '1';
+            $wrapped->correctfeedback['format'] = FORMAT_HTML;
             $wrapped->correctfeedback['itemid'] = '';
             $wrapped->partiallycorrectfeedback['text'] = '';
-            $wrapped->partiallycorrectfeedback['format'] = '1';
+            $wrapped->partiallycorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->partiallycorrectfeedback['itemid'] = '';
             $wrapped->incorrectfeedback['text'] = '';
-            $wrapped->incorrectfeedback['format'] = '1';
+            $wrapped->incorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->incorrectfeedback['itemid'] = '';
             $wrapped->layout = qtype_multichoice_base::LAYOUT_VERTICAL;
         } else if (!empty($answerregs[ANSWER_REGEX_ANSWER_TYPE_MULTICHOICE_HORIZONTAL])) {
@@ -351,13 +366,13 @@ function qtype_multianswer_extract_question($text) {
             $wrapped->shuffleanswers = 0;
             $wrapped->answernumbering = 0;
             $wrapped->correctfeedback['text'] = '';
-            $wrapped->correctfeedback['format'] = '1';
+            $wrapped->correctfeedback['format'] = FORMAT_HTML;
             $wrapped->correctfeedback['itemid'] = '';
             $wrapped->partiallycorrectfeedback['text'] = '';
-            $wrapped->partiallycorrectfeedback['format'] = '1';
+            $wrapped->partiallycorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->partiallycorrectfeedback['itemid'] = '';
             $wrapped->incorrectfeedback['text'] = '';
-            $wrapped->incorrectfeedback['format'] = '1';
+            $wrapped->incorrectfeedback['format'] = FORMAT_HTML;
             $wrapped->incorrectfeedback['itemid'] = '';
             $wrapped->layout = qtype_multichoice_base::LAYOUT_HORIZONTAL;
         } else {
@@ -372,7 +387,7 @@ function qtype_multianswer_extract_question($text) {
         $wrapped->fraction = array();
         $wrapped->feedback = array();
         $wrapped->questiontext['text'] = $answerregs[0];
-        $wrapped->questiontext['format'] = 0;
+        $wrapped->questiontext['format'] = FORMAT_HTML;
         $wrapped->questiontext['itemid'] = '';
         $answerindex = 0;
 
@@ -390,19 +405,19 @@ function qtype_multianswer_extract_question($text) {
                         $altregs[ANSWER_ALTERNATIVE_REGEX_FEEDBACK], ENT_QUOTES, 'UTF-8');
                 $feedback = str_replace('\}', '}', $feedback);
                 $wrapped->feedback["$answerindex"]['text'] = str_replace('\#', '#', $feedback);
-                $wrapped->feedback["$answerindex"]['format'] = '1';
+                $wrapped->feedback["$answerindex"]['format'] = FORMAT_HTML;
                 $wrapped->feedback["$answerindex"]['itemid'] = '';
             } else {
                 $wrapped->feedback["$answerindex"]['text'] = '';
-                $wrapped->feedback["$answerindex"]['format'] = '1';
-                $wrapped->feedback["$answerindex"]['itemid'] = '1';
+                $wrapped->feedback["$answerindex"]['format'] = FORMAT_HTML;
+                $wrapped->feedback["$answerindex"]['itemid'] = '';
 
             }
             if (!empty($answerregs[ANSWER_REGEX_ANSWER_TYPE_NUMERICAL])
                     && preg_match('~'.NUMERICAL_ALTERNATIVE_REGEX.'~',
                             $altregs[ANSWER_ALTERNATIVE_REGEX_ANSWER], $numregs)) {
                 $wrapped->answer[] = $numregs[NUMERICAL_CORRECT_ANSWER];
-                if ($numregs[NUMERICAL_ABS_ERROR_MARGIN]) {
+                if (array_key_exists(NUMERICAL_ABS_ERROR_MARGIN, $numregs)) {
                     $wrapped->tolerance["$answerindex"] =
                     $numregs[NUMERICAL_ABS_ERROR_MARGIN];
                 } else {
@@ -414,6 +429,12 @@ function qtype_multianswer_extract_question($text) {
                         $altregs[ANSWER_ALTERNATIVE_REGEX_ANSWER], ENT_QUOTES, 'UTF-8');
                 $answer = str_replace('\}', '}', $answer);
                 $wrapped->answer["$answerindex"] = str_replace('\#', '#', $answer);
+                if ($wrapped->qtype == 'multichoice') {
+                    $wrapped->answer["$answerindex"] = array(
+                            'text' => $wrapped->answer["$answerindex"],
+                            'format' => FORMAT_HTML,
+                            'itemid' => '');
+                }
             }
             $tmp = explode($altregs[0], $remainingalts, 2);
             $remainingalts = $tmp[1];
@@ -425,6 +446,5 @@ function qtype_multianswer_extract_question($text) {
         $question->questiontext['text'] = implode("{#$positionkey}",
                     explode($answerregs[0], $question->questiontext['text'], 2));
     }
-    $question->questiontext = $question->questiontext;
     return $question;
 }

@@ -50,6 +50,21 @@ class moodle1_qtype_multichoice_handler extends moodle1_qtype_handler {
         }
 
         // convert and write the multichoice
+        if (!isset($data['multichoice'])) {
+            // This should never happen, but it can do if the 1.9 site contained
+            // corrupt data/
+            $data['multichoice'] = array(array(
+                'single'                         => 1,
+                'shuffleanswers'                 => 1,
+                'correctfeedback'                => '',
+                'correctfeedbackformat'          => FORMAT_HTML,
+                'partiallycorrectfeedback'       => '',
+                'partiallycorrectfeedbackformat' => FORMAT_HTML,
+                'incorrectfeedback'              => '',
+                'incorrectfeedbackformat'        => FORMAT_HTML,
+                'answernumbering'                => 'abc',
+            ));
+        }
         $this->write_multichoice($data['multichoice'], $data['oldquestiontextformat']);
     }
 
@@ -82,7 +97,7 @@ class moodle1_qtype_multichoice_handler extends moodle1_qtype_handler {
                 $multichoice['incorrectfeedbackformat']         = FORMAT_HTML;
             } else {
                 $multichoice['correctfeedbackformat']           = $oldquestiontextformat;
-                $multichoice['partiallycorrectfeedback']        = $oldquestiontextformat;
+                $multichoice['partiallycorrectfeedbackformat']  = $oldquestiontextformat;
                 $multichoice['incorrectfeedbackformat']         = $oldquestiontextformat;
             }
 

@@ -183,6 +183,17 @@ if (file_exists("$CFG->dataroot/climaintenance.html")) {
     }
 }
 
+if (CLI_SCRIPT) {
+    // sometimes people use different PHP binary for web and CLI, make 100% sure they have the supported PHP version
+    if (version_compare(phpversion(), '5.3.2') < 0) {
+        $phpversion = phpversion();
+        // do NOT localise - lang strings would not work here and we CAN NOT move it to later place
+        echo "Moodle 2.1 or later requires at least PHP 5.3.2 (currently using version $phpversion).\n";
+        echo "Some servers may have multiple PHP versions installed, are you using the correct executable?\n";
+        exit(1);
+    }
+}
+
 // Detect ajax scripts - they are similar to CLI because we can not redirect, output html, etc.
 if (!defined('AJAX_SCRIPT')) {
     define('AJAX_SCRIPT', false);
@@ -199,8 +210,8 @@ if (empty($CFG->filepermissions)) {
 umask(0000);
 
 // exact version of currently used yui2 and 3 library
-$CFG->yui2version = '2.8.2';
-$CFG->yui3version = '3.2.0';
+$CFG->yui2version = '2.9.0';
+$CFG->yui3version = '3.4.1';
 
 
 // special support for highly optimised scripts that do not need libraries and DB connection
@@ -652,6 +663,9 @@ if (isset($_SERVER['PHP_SELF'])) {
     unset($phppos);
 }
 
+// initialise ME's - this must be done BEFORE starting of session!
+initialise_fullme();
+
 // init session prevention flag - this is defined on pages that do not want session
 if (CLI_SCRIPT) {
     // no sessions in CLI scripts possible
@@ -673,10 +687,6 @@ if (CLI_SCRIPT) {
 session_get_instance();
 $SESSION = &$_SESSION['SESSION'];
 $USER    = &$_SESSION['USER'];
-
-// initialise ME's
-// This must presently come AFTER $USER has been set up.
-initialise_fullme();
 
 // Late profiling, only happening if early one wasn't started
 if (!empty($CFG->profilingenabled)) {
@@ -798,12 +808,14 @@ if (!empty($CFG->customscripts)) {
     }
 }
 
-// in the first case, ip in allowed list will be performed first
-// for example, client IP is 192.168.1.1
-// 192.168 subnet is an entry in allowed list
-// 192.168.1.1 is banned in blocked list
-// This ip will be banned finally
-if (!empty($CFG->allowbeforeblock)) { // allowed list processed before blocked list?
+if (CLI_SCRIPT and !defined('WEB_CRON_EMULATED_CLI') and !PHPUNIT_SCRIPT) {
+    // no ip blocking
+} else if (!empty($CFG->allowbeforeblock)) { // allowed list processed before blocked list?
+    // in this case, ip in allowed list will be performed first
+    // for example, client IP is 192.168.1.1
+    // 192.168 subnet is an entry in allowed list
+    // 192.168.1.1 is banned in blocked list
+    // This ip will be banned finally
     if (!empty($CFG->allowedip)) {
         if (!remoteip_in_list($CFG->allowedip)) {
             die(get_string('ipblocked', 'admin'));

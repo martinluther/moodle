@@ -113,12 +113,25 @@ if (!empty($CFG->usetags)) {
 
 if ($user->id !== -1) {
     $usercontext = get_context_instance(CONTEXT_USER, $user->id);
-    $editoroptions = array('maxfiles'=>EDITOR_UNLIMITED_FILES, 'maxbytes'=>$CFG->maxbytes, 'trusttext'=>false, 'forcehttps'=>false);
+    $editoroptions = array(
+        'maxfiles'   => EDITOR_UNLIMITED_FILES,
+        'maxbytes'   => $CFG->maxbytes,
+        'trusttext'  => false,
+        'forcehttps' => false,
+        'context'    => $usercontext
+    );
+
     $user = file_prepare_standard_editor($user, 'description', $editoroptions, $usercontext, 'user', 'profile', 0);
 } else {
     $usercontext = null;
     // This is a new user, we don't want to add files here
-    $editoroptions = array('maxfiles'=>0, 'maxbytes'=>0, 'trusttext'=>false, 'forcehttps'=>false);
+    $editoroptions = array(
+        'maxfiles'=>0,
+        'maxbytes'=>0,
+        'trusttext'=>false,
+        'forcehttps'=>false,
+        'context' => $coursecontext
+    );
 }
 
 //create form
@@ -126,7 +139,6 @@ $userform = new user_editadvanced_form(null, array('editoroptions'=>$editoroptio
 $userform->set_data($user);
 
 if ($usernew = $userform->get_data()) {
-    add_to_log($course->id, 'user', 'update', "view.php?id=$user->id&course=$course->id", '');
 
     if (empty($usernew->auth)) {
         //user editing self
@@ -148,6 +160,7 @@ if ($usernew = $userform->get_data()) {
         $usernew->password = hash_internal_user_password($usernew->newpassword);
         $usernew->id = $DB->insert_record('user', $usernew);
         $usercreated = true;
+        add_to_log($course->id, 'user', 'add', "view.php?id=$usernew->id&course=$course->id", '');
 
     } else {
         $usernew = file_postupdate_standard_editor($usernew, 'description', $editoroptions, $usercontext, 'user', 'profile', 0);
@@ -158,6 +171,7 @@ if ($usernew = $userform->get_data()) {
             $DB->update_record('user', $user);
             print_error('cannotupdateuseronexauth', '', '', $user->auth);
         }
+        add_to_log($course->id, 'user', 'update', "view.php?id=$user->id&course=$course->id", '');
 
         //set new password if specified
         if (!empty($usernew->newpassword)) {

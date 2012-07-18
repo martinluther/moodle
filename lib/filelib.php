@@ -111,9 +111,26 @@ function file_prepare_standard_editor($data, $field, array $options, $context=nu
         $options['noclean'] = false;
     }
 
+    //sanity check for passed context. This function doesn't expect $option['context'] to be set
+    //But this function is called before creating editor hence, this is one of the best places to check
+    //if context is used properly. This check notify developer that they missed passing context to editor.
+    if (isset($context) && !isset($options['context'])) {
+        //if $context is not null then make sure $option['context'] is also set.
+        debugging('Context for editor is not set in editoroptions. Hence editor will not respect editor filters', DEBUG_DEVELOPER);
+    } else if (isset($options['context']) && isset($context)) {
+        //If both are passed then they should be equal.
+        if ($options['context']->id != $context->id) {
+            $exceptionmsg = 'Editor context ['.$options['context']->id.'] is not equal to passed context ['.$context->id.']';
+            throw new coding_exception($exceptionmsg);
+        }
+    }
+
     if (is_null($itemid) or is_null($context)) {
         $contextid = null;
         $itemid = null;
+        if (!isset($data)) {
+            $data = new stdClass();
+        }
         if (!isset($data->{$field})) {
             $data->{$field} = '';
         }
@@ -1538,8 +1555,18 @@ function get_mimetype_description($mimetype, $capitalise=false) {
  */
 function send_file_not_found() {
     global $CFG, $COURSE;
-    header('HTTP/1.0 404 not found');
+    send_header_404();
     print_error('filenotfound', 'error', $CFG->wwwroot.'/course/view.php?id='.$COURSE->id); //this is not displayed on IIS??
+}
+/**
+ * Helper function to send correct 404 for server.
+ */
+function send_header_404() {
+    if (substr(php_sapi_name(), 0, 3) == 'cgi') {
+        header("Status: 404 Not Found");
+    } else {
+        header('HTTP/1.0 404 not found');
+    }
 }
 
 /**
@@ -1590,12 +1617,19 @@ function prepare_file_content_sending() {
 function send_temp_file($path, $filename, $pathisstring=false) {
     global $CFG;
 
+    if (check_browser_version('Firefox', '1.5')) {
+        // only FF is known to correctly save to disk before opening...
+        $mimetype = mimeinfo('type', $filename);
+    } else {
+        $mimetype = 'application/x-forcedownload';
+    }
+
     // close session - not needed anymore
     @session_get_instance()->write_close();
 
     if (!$pathisstring) {
         if (!file_exists($path)) {
-            header('HTTP/1.0 404 not found');
+            send_header_404();
             print_error('filenotfound', 'error', $CFG->wwwroot.'/');
         }
         // executed after normal finish or abort
@@ -1621,6 +1655,13 @@ function send_temp_file($path, $filename, $pathisstring=false) {
         header('Pragma: no-cache');
     }
     header('Accept-Ranges: none'); // Do not allow byteserving
+
+    if ($mimetype === 'text/plain') {
+        // there is no encoding specified in text files, we need something consistent
+        header('Content-Type: text/plain; charset=utf-8');
+    } else {
+        header('Content-Type: '.$mimetype);
+    }
 
     //flush the buffers - save memory and disable sid rewrite
     // this also disables zlib compression
@@ -1713,6 +1754,21 @@ function send_file($path, $filename, $lifetime = 'default' , $filter=0, $pathiss
 
     //try to disable automatic sid rewrite in cookieless mode
     @ini_set("session.use_trans_sid", "false");
+
+    if ($lifetime > 0 && !empty($_SERVER['HTTP_IF_MODIFIED_SINCE'])) {
+        // get unixtime of request header; clip extra junk off first
+        $since = strtotime(preg_replace('/;.*$/','',$_SERVER["HTTP_IF_MODIFIED_SINCE"]));
+        if ($since && $since >= $lastmodified) {
+            header('HTTP/1.1 304 Not Modified');
+            header('Expires: '. gmdate('D, d M Y H:i:s', time() + $lifetime) .' GMT');
+            header('Cache-Control: max-age='.$lifetime);
+            header('Content-Type: '.$mimetype);
+            if ($dontdie) {
+                return;
+            }
+            die;
+        }
+    }
 
     //do not put '@' before the next header to detect incorrect moodle configurations,
     //error should be better than "weird" empty lines for admins/users
@@ -1928,6 +1984,21 @@ function send_stored_file($stored_file, $lifetime=86400 , $filter=0, $forcedownl
 
     //try to disable automatic sid rewrite in cookieless mode
     @ini_set("session.use_trans_sid", "false");
+
+    if ($lifetime > 0 && !empty($_SERVER['HTTP_IF_MODIFIED_SINCE'])) {
+        // get unixtime of request header; clip extra junk off first
+        $since = strtotime(preg_replace('/;.*$/','',$_SERVER["HTTP_IF_MODIFIED_SINCE"]));
+        if ($since && $since >= $lastmodified) {
+            header('HTTP/1.1 304 Not Modified');
+            header('Expires: '. gmdate('D, d M Y H:i:s', time() + $lifetime) .' GMT');
+            header('Cache-Control: max-age='.$lifetime);
+            header('Content-Type: '.$mimetype);
+            if ($dontdie) {
+                return;
+            }
+            die;
+        }
+    }
 
     //do not put '@' before the next header to detect incorrect moodle configurations,
     //error should be better than "weird" empty lines for admins/users
@@ -2666,14 +2737,36 @@ class curl {
      * Calls {@link multi()} with specific download headers
      *
      * <code>
-     * $c = new curl;
+     * $c = new curl();
+     * $file1 = fopen('a', 'wb');
+     * $file2 = fopen('b', 'wb');
      * $c->download(array(
-     *              array('url'=>'http://localhost/', 'file'=>fopen('a', 'wb')),
-     *              array('url'=>'http://localhost/20/', 'file'=>fopen('b', 'wb'))
+     *     array('url'=>'http://localhost/', 'file'=>$file1),
+     *     array('url'=>'http://localhost/20/', 'file'=>$file2)
+     * ));
+     * fclose($file1);
+     * fclose($file2);
+     * </code>
+     *
+     * or
+     *
+     * <code>
+     * $c = new curl();
+     * $c->download(array(
+     *              array('url'=>'http://localhost/', 'filepath'=>'/tmp/file1.tmp'),
+     *              array('url'=>'http://localhost/20/', 'filepath'=>'/tmp/file2.tmp')
      *              ));
      * </code>
      *
-     * @param array $requests An array of files to request
+     * @param array $requests An array of files to request {
+     *                  url => url to download the file [required]
+     *                  file => file handler, or
+     *                  filepath => file path
+     * }
+     * If 'file' and 'filepath' parameters are both specified in one request, the
+     * open file handle in the 'file' parameter will take precedence and 'filepath'
+     * will be ignored.
+     *
      * @param array $options An array of options to set
      * @return array An array of results
      */
@@ -2696,11 +2789,15 @@ class curl {
         $results = array();
         $main    = curl_multi_init();
         for ($i = 0; $i < $count; $i++) {
-            $url = $requests[$i];
-            foreach($url as $n=>$v){
-                $options[$n] = $url[$n];
+            if (!empty($requests[$i]['filepath']) and empty($requests[$i]['file'])) {
+                // open file
+                $requests[$i]['file'] = fopen($requests[$i]['filepath'], 'w');
+                $requests[$i]['auto-handle'] = true;
             }
-            $handles[$i] = curl_init($url['url']);
+            foreach($requests[$i] as $n=>$v){
+                $options[$n] = $v;
+            }
+            $handles[$i] = curl_init($requests[$i]['url']);
             $this->apply_opt($handles[$i], $options);
             curl_multi_add_handle($main, $handles[$i]);
         }
@@ -2717,6 +2814,13 @@ class curl {
             curl_multi_remove_handle($main, $handles[$i]);
         }
         curl_multi_close($main);
+
+        for ($i = 0; $i < $count; $i++) {
+            if (!empty($requests[$i]['filepath']) and !empty($requests[$i]['auto-handle'])) {
+                // close file handler if file is opened in this function
+                fclose($requests[$i]['file']);
+            }
+        }
         return $results;
     }
     /**

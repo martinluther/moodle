@@ -27,28 +27,50 @@
 
 /**
  * Creates a user
+ *
  * @param object $user user to create
  * @return int id of the newly created user
  */
 function user_create_user($user) {
     global $DB;
 
-/// set the timecreate field to the current time
+    // set the timecreate field to the current time
     if (!is_object($user)) {
             $user = (object)$user;
     }
 
-    /// hash the password
-    $user->password = hash_internal_user_password($user->password);
+    //check username
+    if ($user->username !== textlib_get_instance()->strtolower($user->username)) {
+        throw new moodle_exception('usernamelowercase');
+    } else {
+        if ($user->username !== clean_param($user->username, PARAM_USERNAME)) {
+            throw new moodle_exception('invalidusername');
+        }
+    }
+
+    // save the password in a temp value for later
+    if (isset($user->password)) {
+        $userpassword = $user->password;
+        unset($user->password);
+    }
 
     $user->timecreated = time();
     $user->timemodified = $user->timecreated;
 
-/// insert the user into the database
+    // insert the user into the database
     $newuserid = $DB->insert_record('user', $user);
 
-/// create USER context for this user
+    // trigger user_created event on the full database user row
+    $newuser = $DB->get_record('user', array('id' => $newuserid));
+    events_trigger('user_created', $newuser);
+
+    // create USER context for this user
     get_context_instance(CONTEXT_USER, $newuserid);
+
+    // update user password if necessary
+    if (isset($userpassword)) {
+        update_internal_user_password($newuser, $userpassword);
+    }
 
     return $newuserid;
 
@@ -56,23 +78,47 @@ function user_create_user($user) {
 
 /**
  * Update a user with a user object (will compare against the ID)
- * @param object $user - the user to update
+ *
+ * @param object $user the user to update
  */
 function user_update_user($user) {
     global $DB;
 
-    /// set the timecreate field to the current time
+    // set the timecreate field to the current time
     if (!is_object($user)) {
             $user = (object)$user;
     }
 
-    /// hash the password
-    $user->password = hash_internal_user_password($user->password);
+    //check username
+    if (isset($user->username)) {
+        if ($user->username !== textlib_get_instance()->strtolower($user->username)) {
+            throw new moodle_exception('usernamelowercase');
+        } else {
+            if ($user->username !== clean_param($user->username, PARAM_USERNAME)) {
+                throw new moodle_exception('invalidusername');
+            }
+        }
+    }
+
+    // unset password here, for updating later
+    if (isset($user->password)) {
+        $passwd = $user->password;
+        unset($user->password);
+    }
 
     $user->timemodified = time();
     $DB->update_record('user', $user);
-}
 
+    // trigger user_updated event on the full database user row
+    $updateduser = $DB->get_record('user', array('id' => $user->id));
+    events_trigger('user_updated', $updateduser);
+
+    // if password was set, then update its hash
+    if (isset($passwd)) {
+        update_internal_user_password($updateduser, $passwd);
+    }
+
+}
 
 /**
  * Marks user deleted in internal user database and notifies the auth plugin.
@@ -263,7 +309,8 @@ function user_get_user_details($user, $course = null) {
         }
     }
 
-    if ($currentuser
+    if ($isadmin
+      or $currentuser
       or $canviewuseremail  // this is a capability in course context, it will be false in usercontext
       or $user->maildisplay == 1
       or ($user->maildisplay == 2 and enrol_sharing_course($user, $USER))) {
@@ -316,10 +363,11 @@ function user_get_user_details($user, $course = null) {
         if ($mycourses = enrol_get_users_courses($user->id, true)) {
             foreach ($mycourses as $mycourse) {
                 if ($mycourse->category) {
+                    $coursecontext = get_context_instance(CONTEXT_COURSE, $mycourse->id);
                     $enrolledcourse = array();
                     $enrolledcourse['id'] = $mycourse->id;
-                    $enrolledcourse['fullname'] = $mycourse->fullname;
-                    $enrolledcourse['shortname'] = $mycourse->shortname;
+                    $enrolledcourse['fullname'] = format_string($mycourse->fullname, true, array('context' => get_context_instance(CONTEXT_COURSE, $mycourse->id)));
+                    $enrolledcourse['shortname'] = format_string($mycourse->shortname, true, array('context' => $coursecontext));
                     $enrolledcourses[] = $enrolledcourse;
                 }
             }
@@ -346,8 +394,5 @@ function user_get_user_details($user, $course = null) {
  * @param stdClass $currentcontext Current context of block
  */
 function user_page_type_list($pagetype, $parentcontext, $currentcontext) {
-    return array(
-        'user-profile'=>get_string('page-user-profile', 'pagetype'),
-        'my-index'=>get_string('page-my-index', 'pagetype')
-    );
+    return array('user-profile'=>get_string('page-user-profile', 'pagetype'));
 }

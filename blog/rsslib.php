@@ -164,7 +164,9 @@ function blog_rss_get_feed($context, $args) {
             $item->title = $blog_entry->subject;
             $item->pubdate = $blog_entry->lastmodified;
             $item->link = $CFG->wwwroot.'/blog/index.php?entryid='.$blog_entry->id;
-            $item->description = format_text($blog_entry->summary, $blog_entry->format);
+            $summary = file_rewrite_pluginfile_urls($blog_entry->summary, 'pluginfile.php',
+                $sitecontext->id, 'blog', 'post', $blog_entry->id);
+            $item->description = format_text($summary, $blog_entry->format);
             if ( !empty($CFG->usetags) && ($blogtags = tag_get_tags_array('post', $blog_entry->id)) ) {
                 if ($blogtags) {
                     $item->tags = $blogtags;
@@ -186,9 +188,10 @@ function blog_rss_get_feed($context, $args) {
             break;
         case 'course':
             $info = $DB->get_field('course', 'fullname', array('id'=>$id));
+            $info = format_string($info, true, array('context' => get_context_instance(CONTEXT_COURSE, $id)));
             break;
         case 'site':
-            $info = $SITE->fullname;
+            $info = format_string($SITE->fullname, true, array('context' => get_context_instance(CONTEXT_COURSE, SITEID)));
             break;
         case 'group':
             $group = groups_get_group($id);

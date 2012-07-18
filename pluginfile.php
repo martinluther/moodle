@@ -67,7 +67,7 @@ if (!empty($CFG->excludeoldflashclients) && $mimetype == 'application/x-shockwav
          && $userplayerversion[2] < $requiredplayerversion[2])) {
         $path = $CFG->dirroot."/lib/flashdetect/flashupgrade.swf";  // Alternate content asking user to upgrade Flash
         $filename = "flashupgrade.swf";
-        send_file($path, $filename, O, 0, false, false, 'application/x-shockwave-flash'); // Do not cache
+        send_file($path, $filename, 0, 0, false, false, 'application/x-shockwave-flash'); // Do not cache
     }
 }
 
@@ -85,6 +85,10 @@ if ($component === 'blog') {
         print_error('siteblogdisable', 'blog');
     }
 
+    $entryid = (int)array_shift($args);
+    if (!$entry = $DB->get_record('post', array('module'=>'blog', 'id'=>$entryid))) {
+        send_file_not_found();
+    }
     if ($CFG->bloglevel < BLOG_GLOBAL_LEVEL) {
         require_login();
         if (isguestuser()) {
@@ -95,10 +99,6 @@ if ($component === 'blog') {
                 send_file_not_found();
             }
         }
-    }
-    $entryid = (int)array_shift($args);
-    if (!$entry = $DB->get_record('post', array('module'=>'blog', 'id'=>$entryid))) {
-        send_file_not_found();
     }
 
     if ('publishstate' === 'public') {
@@ -294,24 +294,34 @@ if ($component === 'blog') {
 // ========================================================================================================================
 } else if ($component === 'user') {
     if ($filearea === 'icon' and $context->contextlevel == CONTEXT_USER) {
-        // XXX: pix_url will initialize $PAGE, so we have to set up context here
-        // this temp hack should be fixed by better solution
-        $PAGE->set_context(get_system_context());
-        if (!empty($CFG->forcelogin) and !isloggedin()) {
+        $redirect = false;
+        if (count($args) == 1) {
+            $themename = theme_config::DEFAULT_THEME;
+            $filename = array_shift($args);
+        } else {
+            $themename = array_shift($args);
+            $filename = array_shift($args);
+        }
+        if ((!empty($CFG->forcelogin) and !isloggedin()) ||
+                (!empty($CFG->forceloginforprofileimage) && (!isloggedin() || isguestuser()))) {
             // protect images if login required and not logged in;
+            // also if login is required for profile images and is not logged in or guest
             // do not use require_login() because it is expensive and not suitable here anyway
-            redirect($OUTPUT->pix_url('u/f1'));
+            $redirect = true;
         }
-        $filename = array_pop($args);
-        if ($filename !== 'f1' and $filename !== 'f2') {
-            redirect($OUTPUT->pix_url('u/f1'));
+        if (!$redirect and ($filename !== 'f1' and $filename !== 'f2')) {
+            $filename = 'f1';
+            $redirect = true;
         }
-        if (!$file = $fs->get_file($context->id, 'user', 'icon', 0, '/', $filename.'/.png')) {
+        if (!$redirect && !$file = $fs->get_file($context->id, 'user', 'icon', 0, '/', $filename.'/.png')) {
             if (!$file = $fs->get_file($context->id, 'user', 'icon', 0, '/', $filename.'/.jpg')) {
-                redirect($OUTPUT->pix_url('u/'.$filename));
+                $redirect = true;
             }
         }
-
+        if ($redirect) {
+            $theme = theme_config::load($themename);
+            redirect($theme->pix_url('u/'.$filename, 'moodle'));
+        }
         send_stored_file($file, 60*60*24); // enable long caching, there are many images on each page
 
     } else if ($filearea === 'private' and $context->contextlevel == CONTEXT_USER) {
@@ -721,6 +731,12 @@ if ($component === 'blog') {
         if ($birecord->blockname !== $blockname) {
             // somebody tries to gain illegal access, cm type must match the component!
             send_file_not_found();
+        }
+
+        $bprecord = $DB->get_record('block_positions', array('blockinstanceid' => $context->instanceid), 'visible');
+        // User can't access file, if block is hidden or doesn't have block:view capability
+        if (($bprecord && !$bprecord->visible) || !has_capability('moodle/block:view', $context)) {
+                send_file_not_found();
         }
     } else {
         $birecord = null;

@@ -156,6 +156,8 @@
 #adminsettings .form-item .form-setting .form-multicheckbox li {list-style: none;}
 #adminsettings .form-item .form-setting .form-multicheckbox ul {padding:0;margin:0;}
 #adminsettings .form-item .form-setting .defaultsnext {margin-right: 0.5em;display: inline;}
+#adminsettings .form-item .form-setting .locked-checkbox {margin-right: 0.2em; margin-left: 0.5em;display: inline;}
+.dir-rtl #adminsettings .form-item .form-setting .locked-checkbox {margin-right: 0.5em; margin-left: 0.2em;display: inline;}
 #adminsettings .form-item .form-setting .form-password .unmask,
 #adminsettings .form-item .form-setting .form-defaultinfo {display: inline;}
 #adminsettings .form-item .form-description {display: block;margin: 0.5em 0 0em 14.25em;text-align: left;}
@@ -204,3 +206,8 @@
 #page-admin-plugins #plugins-control-panel .disabled .availability {background-color:#eee;}
 #page-admin-plugins #plugins-control-panel .extension .source {background-color:#f3f2aa;}
 #page-admin-plugins #plugins-control-panel .msg td {text-align:center;}
+
+/** MNet networking */
+#page-admin-mnet-peers .box.deletedhosts {margin-bottom:1em;font-size:80%;}
+#page-admin-mnet-peers .mform .certdetails {background-color:white;}
+#page-admin-mnet-peers .mform .deletedhostinfo {background-color:#ffd3d9;border 2px solid #eeaaaa;padding:4px;margin-bottom:5px;}

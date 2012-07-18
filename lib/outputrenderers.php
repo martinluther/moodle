@@ -520,7 +520,7 @@ class core_renderer extends renderer_base {
 
         } else {
             return '<div class="homelink"><a href="' . $CFG->wwwroot . '/course/view.php?id=' . $this->page->course->id . '">' .
-                    format_string($this->page->course->shortname) . '</a></div>';
+                    format_string($this->page->course->shortname, true, array('context' => $this->page->context)) . '</a></div>';
         }
     }
 
@@ -1432,14 +1432,13 @@ class core_renderer extends renderer_base {
             $aggregatelabel = $ratingmanager->get_aggregate_label($rating->settings->aggregationmethod);
             $aggregatestr   = $rating->get_aggregate_string();
 
-            $aggregatehtml  = html_writer::tag('span', $aggregatestr, array('id' => 'ratingaggregate'.$rating->itemid)).' ';
-            $aggregatehtml .= html_writer::start_tag('span', array('id'=>"ratingcount{$rating->itemid}"));
+            $aggregatehtml  = html_writer::tag('span', $aggregatestr, array('id' => 'ratingaggregate'.$rating->itemid, 'class' => 'ratingaggregate')).' ';
             if ($rating->count > 0) {
-                $aggregatehtml .= "({$rating->count})";
+                $countstr = "({$rating->count})";
             } else {
-                $aggregatehtml .= '-';
+                $countstr = '-';
             }
-            $aggregatehtml .= html_writer::end_tag('span').' ';
+            $aggregatehtml .= html_writer::tag('span', $countstr, array('id'=>"ratingcount{$rating->itemid}", 'class' => 'ratingcount')).' ';
 
             $ratinghtml .= html_writer::tag('span', $aggregatelabel, array('class'=>'rating-aggregate-label'));
             if ($rating->settings->permissions->viewall && $rating->settings->pluginpermissions->viewall) {
@@ -1764,32 +1763,20 @@ class core_renderer extends renderer_base {
         }
 
         if (empty($userpicture->size)) {
-            $file = 'f2';
             $size = 35;
         } else if ($userpicture->size === true or $userpicture->size == 1) {
-            $file = 'f1';
             $size = 100;
-        } else if ($userpicture->size >= 50) {
-            $file = 'f1';
-            $size = $userpicture->size;
         } else {
-            $file = 'f2';
             $size = $userpicture->size;
         }
 
         $class = $userpicture->class;
 
-        if ($user->picture == 1) {
-            $usercontext = get_context_instance(CONTEXT_USER, $user->id);
-            $src = moodle_url::make_pluginfile_url($usercontext->id, 'user', 'icon', NULL, '/', $file);
-
-        } else if ($user->picture == 2) {
-            //TODO: gravatar user icon support
-
-        } else { // Print default user pictures (use theme version if available)
+        if ($user->picture != 1 && $user->picture != 2) {
             $class .= ' defaultuserpic';
-            $src = $this->pix_url('u/' . $file);
         }
+
+        $src = $userpicture->get_url($this->page, $this);
 
         $attributes = array('src'=>$src, 'alt'=>$alt, 'title'=>$alt, 'class'=>$class, 'width'=>$size, 'height'=>$size);
 
@@ -2041,6 +2028,10 @@ EOD;
         $message = '<p class="errormessage">' . $message . '</p>'.
                 '<p class="errorcode"><a href="' . $moreinfourl . '">' .
                 get_string('moreinformation') . '</a></p>';
+        if (empty($CFG->rolesactive)) {
+            $message .= '<p class="errormessage">' . get_string('installproblem', 'error') . '</p>';
+            //It is usually not possible to recover from errors triggered during installation, you may need to create a new database or use a different database prefix for new installation.
+        }
         $output .= $this->box($message, 'errorbox');
 
         if (debugging('', DEBUG_DEVELOPER)) {
@@ -2057,7 +2048,9 @@ EOD;
             }
         }
 
-        if (!empty($link)) {
+        if (empty($CFG->rolesactive)) {
+            // continue does not make much sense if moodle is not installed yet because error is most probably not recoverable
+        } else if (!empty($link)) {
             $output .= $this->continue_button($link);
         }
 
@@ -2345,7 +2338,10 @@ EOD;
             if ($item->hidden) {
                 $link->add_class('dimmed');
             }
-            $link->text = $content.$link->text; // add help icon
+            if (!empty($content)) {
+                // Providing there is content we will use that for the link content.
+                $link->text = $content;
+            }
             $content = $this->render($link);
         } else if ($item->action instanceof moodle_url) {
             $attributes = array();
@@ -2433,8 +2429,10 @@ EOD;
         // Increment the menu count. This is used for ID's that get worked with
         // in JavaScript as is essential
         $menucount++;
-        // Initialise this custom menu
-        $this->page->requires->js_init_call('M.core_custom_menu.init', array('custom_menu_'.$menucount));
+        // Initialise this custom menu (the custom menu object is contained in javascript-static
+        $jscode = js_writer::function_call_with_Y('M.core_custom_menu.init', array('custom_menu_'.$menucount));
+        $jscode = "(function(){{$jscode}})";
+        $this->page->requires->yui_module('node-menunav', $jscode);
         // Build the root nodes as required by YUI
         $content = html_writer::start_tag('div', array('id'=>'custom_menu_'.$menucount, 'class'=>'yui3-menu yui3-menu-horizontal javascript-disabled'));
         $content .= html_writer::start_tag('div', array('class'=>'yui3-menu-content'));

@@ -53,7 +53,7 @@ class completion_criteria_date extends completion_criteria {
     public function config_form_display(&$mform, $data = null)
     {
         $mform->addElement('checkbox', 'criteria_date', get_string('enable'));
-        $mform->addElement('date', 'criteria_date_value', get_string('afterspecifieddate', 'completion'));
+        $mform->addElement('date_selector', 'criteria_date_value', get_string('afterspecifieddate', 'completion'));
 
         // If instance of criteria exists
         if ($this->id) {
@@ -74,8 +74,7 @@ class completion_criteria_date extends completion_criteria {
 
         if (!empty($data->criteria_date)) {
             $this->course = $data->id;
-            $date = $data->criteria_date_value;
-            $this->timeend = strtotime($date['Y'].'-'.$date['M'].'-'.$date['d']);
+            $this->timeend = $data->criteria_date_value;
             $this->insert();
         }
     }
@@ -180,7 +179,7 @@ class completion_criteria_date extends completion_criteria {
         // Loop through completions, and mark as complete
         $rs = $DB->get_recordset_sql($sql, array(time()));
         foreach ($rs as $record) {
-            $completion = new completion_criteria_completion((array)$record);
+            $completion = new completion_criteria_completion((array) $record, DATA_OBJECT_FETCH_BY_KEY);
             $completion->mark_complete($record->timeend);
         }
         $rs->close();

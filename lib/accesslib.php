@@ -368,7 +368,7 @@ function get_role_context_caps($roleid, $context) {
         }
     }
 
-    // now go through the contexts bellow given context
+    // now go through the contexts below given context
     $searchcontexts = array_keys(get_child_contexts($context));
     foreach ($searchcontexts as $cid) {
         if ($capabilities = $DB->get_records('role_capabilities', array('roleid'=>$roleid, 'contextid'=>$cid))) {
@@ -3443,6 +3443,7 @@ function update_capabilities($component = 'moodle') {
         }
     }
     // Add new capabilities to the stored definition.
+    $existingcaps = $DB->get_records_menu('capabilities', array(), 'id', 'id, name');
     foreach ($newcaps as $capname => $capdef) {
         $capability = new stdClass();
         $capability->name         = $capname;
@@ -3453,7 +3454,7 @@ function update_capabilities($component = 'moodle') {
 
         $DB->insert_record('capabilities', $capability, false);
 
-        if (isset($capdef['clonepermissionsfrom']) && in_array($capdef['clonepermissionsfrom'], $storedcaps)){
+        if (isset($capdef['clonepermissionsfrom']) && in_array($capdef['clonepermissionsfrom'], $existingcaps)){
             if ($rolecapabilities = $DB->get_records('role_capabilities', array('capability'=>$capdef['clonepermissionsfrom']))){
                 foreach ($rolecapabilities as $rolecapability){
                     //assign_capability will update rather than insert if capability exists
@@ -3578,7 +3579,7 @@ function print_context_name($context, $withprefix = true, $short = false) {
                 if ($withprefix){
                     $name = get_string('category').': ';
                 }
-                $name .=format_string($category->name);
+                $name .= format_string($category->name, true, array('context' => $context));
             }
             break;
 
@@ -3591,7 +3592,7 @@ function print_context_name($context, $withprefix = true, $short = false) {
                         $name = get_string('course').': ';
                     }
                     if ($short){
-                        $name .= format_string($course->shortname);
+                        $name .= format_string($course->shortname, true, array('context' => $context));
                     } else {
                         $name .= format_string($course->fullname);
                    }
@@ -3748,13 +3749,13 @@ function fetch_context_capabilities($context) {
                            OR name $extra";
         break;
 
-        case CONTEXT_COURSECAT: // course category context and bellow
+        case CONTEXT_COURSECAT: // course category context and below
             $SQL = "SELECT *
                       FROM {capabilities}
                      WHERE contextlevel IN (".CONTEXT_COURSECAT.",".CONTEXT_COURSE.",".CONTEXT_MODULE.",".CONTEXT_BLOCK.")";
         break;
 
-        case CONTEXT_COURSE: // course context and bellow
+        case CONTEXT_COURSE: // course context and below
             $SQL = "SELECT *
                       FROM {capabilities}
                      WHERE contextlevel IN (".CONTEXT_COURSE.",".CONTEXT_MODULE.",".CONTEXT_BLOCK.")";
@@ -5205,7 +5206,7 @@ function get_role_users($roleid, $context, $parent = false, $fields = '',
 
     if (empty($fields)) {
         $fields = 'u.id, u.confirmed, u.username, u.firstname, u.lastname, '.
-                  'u.maildisplay, u.mailformat, u.maildigest, u.email, u.city, '.
+                  'u.maildisplay, u.mailformat, u.maildigest, u.email, u.emailstop, u.city, '.
                   'u.country, u.picture, u.idnumber, u.department, u.institution, '.
                   'u.lang, u.timezone, u.lastaccess, u.mnethostid, r.name AS rolename, r.sortorder';
     }

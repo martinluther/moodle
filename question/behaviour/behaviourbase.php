@@ -70,8 +70,7 @@ abstract class question_behaviour {
     public function __construct(question_attempt $qa, $preferredbehaviour) {
         $this->qa = $qa;
         $this->question = $qa->get_question();
-        $requiredclass = $this->required_question_definition_type();
-        if (!$this->question instanceof $requiredclass) {
+        if (!$this->is_compatible_question($this->question)) {
             throw new coding_exception('This behaviour (' . $this->get_name() .
                     ') cannot work with this question (' . get_class($this->question) . ')');
         }
@@ -82,13 +81,25 @@ abstract class question_behaviour {
     }
 
     /**
+     * Some behaviours can only work with certing types of question. This method
+     * allows the behaviour to verify that a question is compatible.
+     * @param question_definition $question the question.
+     */
+    public function is_compatible_question(question_definition $question) {
+        $requiredclass = $this->required_question_definition_type();
+        return $this->question instanceof $requiredclass;
+    }
+
+    /**
      * Most behaviours can only work with {@link question_definition}s
      * of a particular subtype, or that implement a particular interface.
      * This method lets the behaviour document that. The type of
      * question passed to the constructor is then checked against this type.
      * @return string class/interface name.
      */
-    public abstract function required_question_definition_type();
+    protected function required_question_definition_type() {
+        return 'question_definition';
+    }
 
     /**
      * @return string the name of this behaviour. For example the name of
@@ -444,7 +455,8 @@ abstract class question_behaviour {
                 $fraction = null;
             } else if ($fraction > 1 || $fraction < $this->qa->get_min_fraction()) {
                 throw new coding_exception('Score out of range when processing ' .
-                        'a manual grading action.', $pendingstep);
+                        'a manual grading action.', 'Question ' . $this->qa->get_question()->id .
+                                ', slot ' . $this->qa->get_slot() . ', fraction ' . $fraction);
             }
             $pendingstep->set_fraction($fraction);
         }
@@ -452,6 +464,20 @@ abstract class question_behaviour {
         $pendingstep->set_state($this->qa->get_state()->corresponding_commented_state(
                 $pendingstep->get_fraction()));
         return question_attempt::KEEP;
+    }
+
+    /**
+     * Validate that the manual grade submitted for a particular question is in range.
+     * @param int $qubaid the question_usage id.
+     * @param int $slot the slot number within the usage.
+     * @return bool whether the submitted data is in range.
+     */
+    public static function is_manual_grade_in_range($qubaid, $slot) {
+        $prefix = 'q' . $qubaid . ':' . $slot . '_';
+        $mark = optional_param($prefix . '-mark', null, PARAM_NUMBER);
+        $maxmark = optional_param($prefix . '-maxmark', null, PARAM_NUMBER);
+        $minfraction = optional_param($prefix . ':minfraction', null, PARAM_NUMBER);
+        return is_null($mark) || ($mark >= $minfraction * $maxmark && $mark <= $maxmark);
     }
 
     /**

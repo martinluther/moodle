@@ -259,6 +259,80 @@ class user_picture implements renderable {
 
         return $return;
     }
+
+    /**
+     * Works out the URL for the users picture.
+     *
+     * This method is recommended as it avoids costly redirects of user pictures
+     * if requests are made for non-existent files etc.
+     *
+     * @param renderer_base $renderer
+     * @return moodle_url
+     */
+    public function get_url(moodle_page $page, renderer_base $renderer = null) {
+        global $CFG;
+
+        if (is_null($renderer)) {
+            $renderer = $page->get_renderer('core');
+        }
+
+        if ((!empty($CFG->forcelogin) and !isloggedin()) ||
+                (!empty($CFG->forceloginforprofileimage) && (!isloggedin() || isguestuser()))) {
+            // protect images if login required and not logged in;
+            // also if login is required for profile images and is not logged in or guest
+            // do not use require_login() because it is expensive and not suitable here anyway
+            return $renderer->pix_url('u/f1');
+        }
+
+        // Sort out the filename and size. Size is only required for the gravatar
+        // implementation presently.
+        if (empty($this->size)) {
+            $filename = 'f2';
+            $size = 35;
+        } else if ($this->size === true or $this->size == 1) {
+            $filename = 'f1';
+            $size = 100;
+        } else if ($this->size >= 50) {
+            $filename = 'f1';
+            $size = (int)$this->size;
+        } else {
+            $filename = 'f2';
+            $size = (int)$this->size;
+        }
+
+        if ($this->user->picture == 1) {
+            // The user has uploaded their own profile pic. In this case we will
+            // check that a profile pic file does actually exist
+            $fs = get_file_storage();
+            $context = get_context_instance(CONTEXT_USER, $this->user->id);
+            if (!$fs->file_exists($context->id, 'user', 'icon', 0, '/', $filename.'/.png')) {
+                if (!$fs->file_exists($context->id, 'user', 'icon', 0, '/', $filename.'/.jpg')) {
+                    return $renderer->pix_url('u/'.$filename);
+                }
+            }
+            $path = '/';
+            if (clean_param($page->theme->name, PARAM_THEME) == $page->theme->name) {
+                // We append the theme name to the file path if we have it so that
+                // in the circumstance that the profile picture is not available
+                // when the user actually requests it they still get the profile
+                // picture for the correct theme.
+                $path .= $page->theme->name.'/';
+            }
+            return moodle_url::make_pluginfile_url($context->id, 'user', 'icon', NULL, $path, $filename);
+
+        } else if ($this->user->picture == 2) {
+            // This is just VERY basic support for gravatar to give the actual
+            // implementor a headstart in what to do.
+            if ($size < 1 || $size > 500) {
+                $size = 35;
+            }
+            $md5 = md5(strtolower(trim($this->user->email)));
+            $default = urlencode($this->pix_url('u/'.$filename)->out(false));
+            return "http://www.gravatar.com/avatar/{$md5}?s={$size}&d={$default}";
+        }
+
+        return $renderer->pix_url('u/'.$filename);
+    }
 }
 
 /**
@@ -1108,7 +1182,7 @@ class html_writer {
                     $timeunits[$i] = userdate(gmmktime(12,0,0,$i,15,2000), "%B");
                 }
                 $userdatetype = 'month';
-                $currentdate['month'] = $currentdate['mon'];
+                $currentdate['month'] = (int)$currentdate['mon'];
                 break;
             case 'days':
                 for ($i=1; $i<=31; $i++) {

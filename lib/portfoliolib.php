@@ -255,7 +255,7 @@ class portfolio_add_button {
     *
     * @param int $format format to display the button or form or icon or link.
     *                    See constants PORTFOLIO_ADD_XXX for more info.
-    *                    optional, defaults to PORTFOLI_ADD_FULL_FORM
+    *                    optional, defaults to PORTFOLIO_ADD_FULL_FORM
     * @param str $addstr string to use for the button or icon alt text or link text.
     *                    this is whole string, not key.  optional, defaults to 'Add to portfolio';
     */
@@ -353,7 +353,7 @@ class portfolio_add_button {
                 $formoutput .= "\n" . '</form>';
             break;
             case PORTFOLIO_ADD_ICON_LINK:
-                $linkoutput .= '"><img class="portfolio-add-icon" src="' . $OUTPUT->pix_url('t/portfolioadd') . '" alt="' . $addstr .'" /></a>';
+                $linkoutput .= '"><img class="portfolio-add-icon iconsmall" src="' . $OUTPUT->pix_url('t/portfolioadd') . '" alt="' . $addstr .'" /></a>';
             break;
             case PORTFOLIO_ADD_TEXT_LINK:
                 $linkoutput .= '">' . $addstr .'</a>';
@@ -1087,7 +1087,7 @@ function portfolio_insane_notify_admins($insane, $instances=false) {
     $site = get_site();
 
     $a = new StdClass;
-    $a->sitename = $site->fullname;
+    $a->sitename = format_string($site->fullname, true, array('context' => get_context_instance(CONTEXT_COURSE, SITEID)));
     $a->fixurl   = "$CFG->wwwroot/$CFG->admin/settings.php?section=manageportfolios";
     $a->htmllist = portfolio_report_insane($insane, $instances, true);
     $a->textlist = '';

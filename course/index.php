@@ -125,7 +125,7 @@ if (!empty($delete) and confirm_sesskey()) {
     require_capability('moodle/category:manage', $context);
     require_capability('moodle/category:manage', get_category_or_system_context($deletecat->parent));
 
-    $heading = get_string('deletecategory', 'moodle', format_string($deletecat->name));
+    $heading = get_string('deletecategory', 'moodle', format_string($deletecat->name, true, array('context' => $context)));
     require_once('delete_category_form.php');
     $mform = new delete_category_form(null, $deletecat);
     $mform->set_data(array('delete'=>$delete));
@@ -151,7 +151,7 @@ if (!empty($delete) and confirm_sesskey()) {
         foreach($deletedcourses as $course) {
             echo $OUTPUT->notification(get_string('coursedeleted', '', $course->shortname), 'notifysuccess');
         }
-        echo $OUTPUT->notification(get_string('coursecategorydeleted', '', format_string($deletecat->name)), 'notifysuccess');
+        echo $OUTPUT->notification(get_string('coursecategorydeleted', '', format_string($deletecat->name, true, array('context' => $context))), 'notifysuccess');
 
     } else {
         category_delete_move($deletecat, $data->newparent, true);
@@ -177,6 +177,7 @@ if (!$categories = get_categories()) {    /// No category yet!
     $tempcat->context = get_context_instance(CONTEXT_COURSECAT, $tempcat->id);
     mark_context_dirty('/'.SYSCONTEXTID);
     fix_course_sortorder(); // Required to build course_categories.depth and .path.
+    set_config('defaultrequestcategory', $tempcat->id);
 }
 
 /// Move a category to a new parent if required
@@ -315,7 +316,7 @@ function print_category_edit($category, $displaylist, $parentslist, $depth=-1, $
         $linkcss = $category->visible ? '' : ' class="dimmed" ';
         echo '<a '.$linkcss.' title="'.$str->edit.'" '.
              ' href="category.php?id='.$category->id.'&amp;categoryedit=on&amp;sesskey='.sesskey().'">'.
-             format_string($category->name).'</a>';
+             format_string($category->name, true, array('context' => $category->context)).'</a>';
         echo '</td>';
 
         echo '<td class="count">'.$category->coursecount.'</td>';
@@ -373,6 +374,7 @@ function print_category_edit($category, $displaylist, $parentslist, $depth=-1, $
         echo '</td>';
         echo '</tr>';
     } else {
+        $category = new stdClass();
         $category->id = '0';
     }
 

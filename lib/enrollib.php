@@ -226,15 +226,39 @@ function enrol_check_plugins($user) {
  * The courses has to be visible and enrolments has to be active,
  * timestart and timeend restrictions are ignored.
  *
+ * This function calls {@see enrol_get_shared_courses()} setting checkexistsonly
+ * to true.
+ *
  * @param stdClass|int $user1
  * @param stdClass|int $user2
  * @return bool
  */
 function enrol_sharing_course($user1, $user2) {
+    return enrol_get_shared_courses($user1, $user2, false, true);
+}
+
+/**
+ * Returns any courses shared by the two users
+ *
+ * The courses has to be visible and enrolments has to be active,
+ * timestart and timeend restrictions are ignored.
+ *
+ * @global moodle_database $DB
+ * @param stdClass|int $user1
+ * @param stdClass|int $user2
+ * @param bool $preloadcontexts If set to true contexts for the returned courses
+ *              will be preloaded.
+ * @param bool $checkexistsonly If set to true then this function will return true
+ *              if the users share any courses and false if not.
+ * @return array|bool An array of courses that both users are enrolled in OR if
+ *              $checkexistsonly set returns true if the users share any courses
+ *              and false if not.
+ */
+function enrol_get_shared_courses($user1, $user2, $preloadcontexts = false, $checkexistsonly = false) {
     global $DB, $CFG;
 
-    $user1 = !empty($user1->id) ? $user1->id : $user1;
-    $user2 = !empty($user2->id) ? $user2->id : $user2;
+    $user1 = isset($user1->id) ? $user1->id : $user1;
+    $user2 = isset($user2->id) ? $user2->id : $user2;
 
     if (empty($user1) or empty($user2)) {
         return false;
@@ -251,14 +275,33 @@ function enrol_sharing_course($user1, $user2) {
     $params['user1']   = $user1;
     $params['user2']   = $user2;
 
-    $sql = "SELECT DISTINCT 'x'
-              FROM {enrol} e
-              JOIN {user_enrolments} ue1 ON (ue1.enrolid = e.id AND ue1.status = :active1 AND ue1.userid = :user1)
-              JOIN {user_enrolments} ue2 ON (ue1.enrolid = e.id AND ue1.status = :active2 AND ue2.userid = :user2)
-              JOIN {course} c ON (c.id = e.courseid AND c.visible = 1)
-             WHERE e.status = :enabled AND e.enrol $plugins";
+    $ctxselect = '';
+    $ctxjoin = '';
+    if ($preloadcontexts) {
+        list($ctxselect, $ctxjoin) = context_instance_preload_sql('c.id', CONTEXT_COURSE, 'ctx');
+    }
 
-    return $DB->record_exists_sql($sql, $params);
+    $sql = "SELECT c.* $ctxselect
+              FROM {course} c
+              JOIN (
+                SELECT DISTINCT c.id
+                  FROM {enrol} e
+                  JOIN {user_enrolments} ue1 ON (ue1.enrolid = e.id AND ue1.status = :active1 AND ue1.userid = :user1)
+                  JOIN {user_enrolments} ue2 ON (ue2.enrolid = e.id AND ue2.status = :active2 AND ue2.userid = :user2)
+                  JOIN {course} c ON (c.id = e.courseid AND c.visible = 1)
+                 WHERE e.status = :enabled AND e.enrol $plugins
+              ) ec ON ec.id = c.id
+              $ctxjoin";
+
+    if ($checkexistsonly) {
+        return $DB->record_exists_sql($sql, $params);
+    } else {
+        $courses = $DB->get_records_sql($sql, $params);
+        if ($preloadcontexts) {
+            array_map('context_instance_preload', $courses);
+        }
+        return $courses;
+    }
 }
 
 /**
@@ -426,20 +469,24 @@ function enrol_add_course_navigation(navigation_node $coursenode, $course) {
     $usersnode->trim_if_empty();
 
     if ($course->id != SITEID) {
-        // Unenrol link
-        if (is_enrolled($coursecontext)) {
+        if (isguestuser() or !isloggedin()) {
+            // guest account can not be enrolled - no links for them
+        } else if (is_enrolled($coursecontext)) {
+            // unenrol link if possible
             foreach ($instances as $instance) {
                 if (!isset($plugins[$instance->enrol])) {
                     continue;
                 }
                 $plugin = $plugins[$instance->enrol];
                 if ($unenrollink = $plugin->get_unenrolself_link($instance)) {
-                    $coursenode->add(get_string('unenrolme', 'core_enrol', format_string($course->shortname)), $unenrollink, navigation_node::TYPE_SETTING, null, 'unenrolself', new pix_icon('i/user', ''));
+                    $shortname = format_string($course->shortname, true, array('context' => $coursecontext));
+                    $coursenode->add(get_string('unenrolme', 'core_enrol', $shortname), $unenrollink, navigation_node::TYPE_SETTING, null, 'unenrolself', new pix_icon('i/user', ''));
                     break;
                     //TODO. deal with multiple unenrol links - not likely case, but still...
                 }
             }
         } else {
+            // enrol link if possible
             if (is_viewing($coursecontext)) {
                 // better not show any enrol link, this is intended for managers and inspectors
             } else {
@@ -450,7 +497,8 @@ function enrol_add_course_navigation(navigation_node $coursenode, $course) {
                     $plugin = $plugins[$instance->enrol];
                     if ($plugin->show_enrolme_link($instance)) {
                         $url = new moodle_url('/enrol/index.php', array('id'=>$course->id));
-                        $coursenode->add(get_string('enrolme', 'core_enrol', format_string($course->shortname)), $url, navigation_node::TYPE_SETTING, null, 'enrolself', new pix_icon('i/user', ''));
+                        $shortname = format_string($course->shortname, true, array('context' => $coursecontext));
+                        $coursenode->add(get_string('enrolme', 'core_enrol', $shortname), $url, navigation_node::TYPE_SETTING, null, 'enrolself', new pix_icon('i/user', ''));
                         break;
                     }
                 }
@@ -626,6 +674,7 @@ function enrol_get_course_description_texts($course) {
 
 /**
  * Returns list of courses user is enrolled into.
+ * (Note: use enrol_get_all_users_courses if you want to use the list wihtout any cap checks )
  *
  * - $fields is an array of fieldnames to ADD
  *   so name the fields you really need, which will
@@ -640,15 +689,53 @@ function enrol_get_course_description_texts($course) {
 function enrol_get_users_courses($userid, $onlyactive = false, $fields = NULL, $sort = 'visible DESC,sortorder ASC') {
     global $DB;
 
+    $courses = enrol_get_all_users_courses($userid, $onlyactive, $fields, $sort);
+
+    // preload contexts and check visibility
+    if ($onlyactive) {
+        foreach ($courses as $id=>$course) {
+            context_instance_preload($course);
+            if (!$course->visible) {
+                if (!$context = get_context_instance(CONTEXT_COURSE, $id)) {
+                    unset($courses[$id]);
+                    continue;
+                }
+                if (!has_capability('moodle/course:viewhiddencourses', $context, $userid)) {
+                    unset($courses[$id]);
+                    continue;
+                }
+            }
+        }
+    }
+
+    return $courses;
+
+}
+
+/**
+ * Returns list of courses user is enrolled into without any capability checks
+ * - $fields is an array of fieldnames to ADD
+ *   so name the fields you really need, which will
+ *   be added and uniq'd
+ *
+ * @param int $userid
+ * @param bool $onlyactive return only active enrolments in courses user may see
+ * @param string|array $fields
+ * @param string $sort
+ * @return array
+ */
+function enrol_get_all_users_courses($userid, $onlyactive = false, $fields = NULL, $sort = 'visible DESC,sortorder ASC') {
+    global $DB;
+
     // Guest account does not have any courses
     if (isguestuser($userid) or empty($userid)) {
         return(array());
     }
 
     $basefields = array('id', 'category', 'sortorder',
-                        'shortname', 'fullname', 'idnumber',
-                        'startdate', 'visible',
-                        'groupmode', 'groupmodeforce');
+            'shortname', 'fullname', 'idnumber',
+            'startdate', 'visible',
+            'groupmode', 'groupmodeforce');
 
     if (empty($fields)) {
         $fields = $basefields;
@@ -712,29 +799,10 @@ function enrol_get_users_courses($userid, $onlyactive = false, $fields = NULL, $
 
     $courses = $DB->get_records_sql($sql, $params);
 
-    // preload contexts and check visibility
-    foreach ($courses as $id=>$course) {
-        context_instance_preload($course);
-        if ($onlyactive) {
-            if (!$course->visible) {
-                if (!$context = get_context_instance(CONTEXT_COURSE, $id)) {
-                    unset($courses[$id]);
-                    continue;
-                }
-                if (!has_capability('moodle/course:viewhiddencourses', $context, $userid)) {
-                    unset($courses[$id]);
-                    continue;
-                }
-            }
-        }
-        $courses[$id] = $course;
-    }
-
-    //wow! Is that really all? :-D
-
     return $courses;
-
 }
+
+
 
 /**
  * Called when user is about to be deleted.
@@ -905,10 +973,7 @@ abstract class enrol_plugin {
     protected function load_config() {
         if (!isset($this->config)) {
             $name = $this->get_name();
-            if (!$config = get_config("enrol_$name")) {
-                $config = new stdClass();
-            }
-            $this->config = $config;
+            $this->config = get_config("enrol_$name");
         }
     }
 

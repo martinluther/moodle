@@ -201,6 +201,7 @@ function lesson_unseen_branch_jump($lesson, $userid) {
     // this function searches through the lesson pages to find all the branch tables
     // that follow the flagged branch table
     $pageid = $lessonpages[$start]->nextpageid; // move down from the flagged branch table
+    $branchtables = array();
     while ($pageid != 0) {  // grab all of the branch table till eol
         if ($lessonpages[$pageid]->qtype == LESSON_PAGE_BRANCHTABLE) {
             $branchtables[] = $lessonpages[$pageid]->id;
@@ -723,7 +724,7 @@ abstract class lesson_add_page_form_base extends moodleform {
 
         if ($this->standard === true) {
             $mform->addElement('hidden', 'qtype');
-            $mform->setType('qtype', PARAM_SAFEDIR);
+            $mform->setType('qtype', PARAM_INT);
 
             $mform->addElement('text', 'title', get_string('pagetitle', 'lesson'), array('size'=>70));
             $mform->setType('title', PARAM_TEXT);
@@ -740,8 +741,10 @@ abstract class lesson_add_page_form_base extends moodleform {
         if ($this->_customdata['edit'] === true) {
             $mform->addElement('hidden', 'edit', 1);
             $this->add_action_buttons(get_string('cancel'), get_string('savepage', 'lesson'));
-        } else {
+        } else if ($this->qtype === 'questiontype') {
             $this->add_action_buttons(get_string('cancel'), get_string('addaquestionpage', 'lesson'));
+        } else {
+            $this->add_action_buttons(get_string('cancel'), get_string('savepage', 'lesson'));
         }
     }
 
@@ -1117,7 +1120,7 @@ class lesson extends lesson_base {
     }
 
      /**
-     * Gets the next page to display after the one that is provided.
+     * Gets the next page id to display after the one that is provided.
      * @param int $nextpageid
      * @return bool
      */
@@ -1126,19 +1129,19 @@ class lesson extends lesson_base {
         $allpages = $this->load_all_pages();
         if ($this->properties->nextpagedefault) {
             // in Flash Card mode...first get number of retakes
-            $nretakes = $DB->count_records("lesson_grades", array("lessonid"=>$this->properties->id, "userid"=>$USER->id));
+            $nretakes = $DB->count_records("lesson_grades", array("lessonid" => $this->properties->id, "userid" => $USER->id));
             shuffle($allpages);
             $found = false;
             if ($this->properties->nextpagedefault == LESSON_UNSEENPAGE) {
                 foreach ($allpages as $nextpage) {
-                    if (!$DB->count_records("lesson_attempts", array("pageid"=>$nextpage->id, "userid"=>$USER->id, "retry"=>$nretakes))) {
+                    if (!$DB->count_records("lesson_attempts", array("pageid" => $nextpage->id, "userid" => $USER->id, "retry" => $nretakes))) {
                         $found = true;
                         break;
                     }
                 }
             } elseif ($this->properties->nextpagedefault == LESSON_UNANSWEREDPAGE) {
                 foreach ($allpages as $nextpage) {
-                    if (!$DB->count_records("lesson_attempts", array('pageid'=>$nextpage->id, 'userid'=>$USER->id, 'correct'=>1, 'retry'=>$nretakes))) {
+                    if (!$DB->count_records("lesson_attempts", array('pageid' => $nextpage->id, 'userid' => $USER->id, 'correct' => 1, 'retry' => $nretakes))) {
                         $found = true;
                         break;
                     }
@@ -1147,20 +1150,20 @@ class lesson extends lesson_base {
             if ($found) {
                 if ($this->properties->maxpages) {
                     // check number of pages viewed (in the lesson)
-                    if ($DB->count_records("lesson_attempts", array("lessonid"=>$this->properties->id, "userid"=>$USER->id, "retry"=>$nretakes)) >= $this->properties->maxpages) {
-                        return false;
+                    if ($DB->count_records("lesson_attempts", array("lessonid" => $this->properties->id, "userid" => $USER->id, "retry" => $nretakes)) >= $this->properties->maxpages) {
+                        return LESSON_EOL;
                     }
                 }
-                return $nextpage;
+                return $nextpage->id;
             }
         }
         // In a normal lesson mode
         foreach ($allpages as $nextpage) {
-            if ((int)$nextpage->id===(int)$nextpageid) {
-                return $nextpage;
+            if ((int)$nextpage->id === (int)$nextpageid) {
+                return $nextpage->id;
             }
         }
-        return false;
+        return LESSON_EOL;
     }
 
     /**
@@ -1985,12 +1988,7 @@ abstract class lesson_page extends lesson_base {
             if ($result->newpageid == 0) {
                 $result->newpageid = $this->properties->id;
             } elseif ($result->newpageid == LESSON_NEXTPAGE) {
-                $nextpage = $this->lesson->get_next_page($this->properties->nextpageid);
-                if ($nextpage === false) {
-                    $result->newpageid = LESSON_EOL;
-                } else {
-                    $result->newpageid = $nextpage->id;
-                }
+                $result->newpageid = $this->lesson->get_next_page($this->properties->nextpageid);
             }
 
             // Determine default feedback if necessary
@@ -2154,7 +2152,8 @@ abstract class lesson_page extends lesson_base {
                 $this->answers[$i]->responseformat = $properties->response_editor[$i]['format'];
             }
 
-            if (!empty($this->answers[$i]->answer)) {
+            // we don't need to check for isset here because properties called it's own isset method.
+            if ($this->answers[$i]->answer != '') {
                 if (isset($properties->jumpto[$i])) {
                     $this->answers[$i]->jumpto = $properties->jumpto[$i];
                 }
@@ -2247,7 +2246,7 @@ abstract class lesson_page extends lesson_base {
                 $answer->responseformat = $properties->response_editor[$i]['format'];
             }
 
-            if (!empty($answer->answer)) {
+            if (isset($answer->answer) && $answer->answer != '') {
                 if (isset($properties->jumpto[$i])) {
                     $answer->jumpto = $properties->jumpto[$i];
                 }

@@ -90,7 +90,12 @@ class completion_criteria_duration extends completion_criteria {
     private function get_timeenrolled($completion) {
         global $DB;
 
-        return $DB->get_field('user_enrolments', 'timestart', array('courseid' => $this->course, 'userid' => $completion->userid));
+        return $DB->get_field_sql('
+            SELECT eu.timestart
+              FROM {user_enrolments} eu
+              JOIN {enrol} e ON eu.enrolid = e.id
+             WHERE e.courseid = ?
+               AND eu.userid = ?', array($this->course, $completion->userid));
     }
 
     /**
@@ -220,8 +225,7 @@ class completion_criteria_duration extends completion_criteria {
         $now = time();
         $rs = $DB->get_recordset_sql($sql, array($now, $now));
         foreach ($rs as $record) {
-
-            $completion = new completion_criteria_completion((array)$record);
+            $completion = new completion_criteria_completion((array) $record, DATA_OBJECT_FETCH_BY_KEY);
 
             // Use time start if not 0, otherwise use timeenrolled
             if ($record->otimestart) {

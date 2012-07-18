@@ -1230,8 +1230,14 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
         $field = new xmldb_field('backuptype', XMLDB_TYPE_CHAR, '50', null, XMLDB_NOTNULL, null, null, 'info');
     /// Conditionally Launch add field backuptype and set all old records as 'scheduledbackup' records.
         if (!$dbman->field_exists($table, $field)) {
+            // Set the default we want applied to any existing records
+            $field->setDefault('scheduledbackup');
+            // Add the field to the database
             $dbman->add_field($table, $field);
-            $DB->execute("UPDATE {backup_log} SET backuptype='scheduledbackup'");
+            // Remove the default
+            $field->setDefault(null);
+            // Update the database to remove the default
+            $dbman->change_field_default($table, $field);
         }
 
     /// Main savepoint reached
@@ -2121,7 +2127,7 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
                 $instanceids[] = $blockinstance->id;
                 // If we have more than 1000 block instances now remove all block positions
                 // and empty the array
-                if (count($contextids) > 1000) {
+                if (count($instanceids) > 1000) {
                     $instanceidstring = join(',',$instanceids);
                     $DB->delete_records_select('block_positions', 'blockinstanceid IN ('.$instanceidstring.')');
                     $instanceids = array();
@@ -2131,8 +2137,10 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
 
         upgrade_cleanup_unwanted_block_contexts($contextids);
 
-        $instanceidstring = join(',',$instanceids);
-        $DB->delete_records_select('block_positions', 'blockinstanceid IN ('.$instanceidstring.')');
+        if ($instanceids) {
+            $instanceidstring = join(',',$instanceids);
+            $DB->delete_records_select('block_positions', 'blockinstanceid IN ('.$instanceidstring.')');
+        }
 
         unset($allblockinstances);
         unset($contextids);
@@ -2906,7 +2914,7 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
             $DB->delete_records('role_capabilities', array('capability'=>'moodle/site:config', 'roleid'=>$manager->id)); // only site admins may configure servers
             // note: doanything and legacy caps are deleted automatically, they get moodle/course:view later at the end of the upgrade
 
-            // remove manager role assignments bellow the course context level - admin role was never intended for activities and blocks,
+            // remove manager role assignments below the course context level - admin role was never intended for activities and blocks,
             // the problem is that those assignments would not be visible after upgrade and old style admins in activities make no sense anyway
             $DB->delete_records_select('role_assignments', "roleid = :manager AND contextid IN (SELECT id FROM {context} WHERE contextlevel > 50)", array('manager'=>$manager->id));
 
@@ -5026,7 +5034,8 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
                         break;
                     case CONTEXT_COURSECAT :
                     case CONTEXT_SYSTEM :
-                        $context = get_system_context();
+                        // Stored in the front-page course.
+                        $context = get_context_instance(CONTEXT_COURSE, get_site()->id);
                         break;
                     default :
                         continue;
@@ -5436,7 +5445,7 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
     if ($oldversion < 2010102700) {
 
         $table = new xmldb_table('post');
-        $field = new xmldb_field('uniquehash', XMLDB_TYPE_CHAR, '128', null, XMLDB_NOTNULL, null, null, 'content');
+        $field = new xmldb_field('uniquehash', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null, 'content');
         // Launch change of precision for field name
         $dbman->change_field_precision($table, $field);
 
@@ -5782,24 +5791,6 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
         upgrade_main_savepoint(true, 2011011406);
     }
 
-    if ($oldversion < 2011011407) {
-        // Check if we need to fix post.uniquehash
-        $columns = $DB->get_columns('my_pages');
-        if (array_key_exists('uniquehash', $columns) && $columns['uniquehash']->max_length != 128) {
-            // Fix discrepancies in the post table after upgrade from 1.9
-            $table = new xmldb_table('post');
-
-            // Uniquehash should be 128 chars
-            // Fixed in earlier upgrade code
-            $field = new xmldb_field('uniquehash', XMLDB_TYPE_CHAR, 128, null, XMLDB_NOTNULL, null, null, 'content');
-            if ($dbman->field_exists($table, $field)) {
-                $dbman->change_field_precision($table, $field);
-            }
-        }
-
-        upgrade_main_savepoint(true, 2011011407);
-    }
-
     if ($oldversion < 2011011408) {
         // Fix question in the post table after upgrade from 1.9
         $columns = $DB->get_columns('question');
@@ -6043,11 +6034,12 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
          // Define field secret to be added to registration_hubs
         $table = new xmldb_table('registration_hubs');
         $field = new xmldb_field('secret', XMLDB_TYPE_CHAR, '255', null, null, null,
-                $CFG->siteidentifier, 'confirmed');
+                null, 'confirmed');
 
-        // Conditionally launch add field secret
+        // Conditionally launch add field secret  and set its value
         if (!$dbman->field_exists($table, $field)) {
             $dbman->add_field($table, $field);
+            $DB->set_field('registration_hubs', 'secret', $CFG->siteidentifier);
         }
 
         // Main savepoint reached
@@ -6637,11 +6629,197 @@ FROM
     // Moodle v2.1.0 release upgrade line
     // Put any upgrade step following this
 
+    if ($oldversion < 2011070101.04) {
+        // Remove category_sortorder index that was supposed to be removed long time ago
+        $table = new xmldb_table('course');
+        $index = new xmldb_index('category_sortorder', XMLDB_INDEX_UNIQUE, array('category', 'sortorder'));
+
+        if ($dbman->index_exists($table, $index)) {
+            $dbman->drop_index($table, $index);
+        }
+        upgrade_main_savepoint(true, 2011070101.04);
+    }
+
+    if ($oldversion < 2011070101.09) {
+        // Changing the default of field secret on table registration_hubs to NULL
+        $table = new xmldb_table('registration_hubs');
+        $field = new xmldb_field('secret', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'confirmed');
+
+        // Launch change of default for field secret
+        $dbman->change_field_default($table, $field);
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2011070101.09);
+    }
+
+    if ($oldversion < 2011070101.10) {
+        //preference not required since 2.0
+        $DB->delete_records('user_preferences', array('name'=>'message_showmessagewindow'));
+
+        //re-introducing emailstop. check that its turned off so people dont suddenly stop getting notifications
+        $DB->set_field('user', 'emailstop', 0, array('emailstop' => 1));
+
+        upgrade_main_savepoint(true, 2011070101.10);
+    }
+
+    if ($oldversion < 2011070102.08) {
+        upgrade_set_timeout(60*20); // this may take a while
+        // Remove duplicate entries from groupings_groups table
+        $sql = 'SELECT MIN(id) AS firstid, groupingid, groupid FROM {groupings_groups} '.
+               'GROUP BY groupingid, groupid HAVING COUNT(id)>1';
+        $badrs = $DB->get_recordset_sql($sql);
+        foreach ($badrs as $badrec) {
+            $where = 'groupingid = ? and groupid = ? and id > ?';
+            $params = array($badrec->groupingid, $badrec->groupid, $badrec->firstid);
+            $DB->delete_records_select('groupings_groups', $where, $params);
+        }
+        $badrs->close();
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2011070102.08);
+    }
+
+    if ($oldversion < 2011070103.04) {
+
+        upgrade_set_timeout(60*20); // This may take a while
+        // MDL-28180. Some missing restrictions in certain backup & restore operations
+        // were causing incorrect duplicates in the course_completion_aggr_methd table.
+        // This upgrade step takes rid of them.
+        $sql = 'SELECT course, criteriatype, MIN(id) AS minid
+                  FROM {course_completion_aggr_methd}
+              GROUP BY course, criteriatype
+                HAVING COUNT(*) > 1';
+        $duprs = $DB->get_recordset_sql($sql);
+        foreach ($duprs as $duprec) {
+            // We need to handle NULLs in criteriatype diferently
+            if (is_null($duprec->criteriatype)) {
+                $where = 'course = ? AND criteriatype IS NULL AND id > ?';
+                $params = array($duprec->course, $duprec->minid);
+            } else {
+                $where = 'course = ? AND criteriatype = ? AND id > ?';
+                $params = array($duprec->course, $duprec->criteriatype, $duprec->minid);
+            }
+            $DB->delete_records_select('course_completion_aggr_methd', $where, $params);
+        }
+        $duprs->close();
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2011070103.04);
+    }
+
+    if ($oldversion < 2011070104.08) {
+        // Check if we need to fix post.uniquehash
+        $columns = $DB->get_columns('post');
+        if (array_key_exists('uniquehash', $columns) && $columns['uniquehash']->max_length != 255) {
+            // Fix discrepancies in the post table after upgrade from 1.9
+            $table = new xmldb_table('post');
+
+            // Uniquehash should be 255 chars, fixed in earlier upgrade code
+            $field = new xmldb_field('uniquehash', XMLDB_TYPE_CHAR, 255, null, XMLDB_NOTNULL, null, null, 'content');
+            if ($dbman->field_exists($table, $field)) {
+                $dbman->change_field_precision($table, $field);
+            }
+        }
+
+        upgrade_main_savepoint(true, 2011070104.08);
+    }
+
+    if ($oldversion < 2011070104.09) {
+        // Somewhere before 1.9 summary and content column in post table were not null. In 1.9+
+        // not null became false.
+        $columns = $DB->get_columns('post');
+
+        // Fix discrepancies in summary field after upgrade from 1.9
+        if (array_key_exists('summary', $columns) && $columns['summary']->not_null != false) {
+            $table = new xmldb_table('post');
+            $summaryfield = new xmldb_field('summary', XMLDB_TYPE_TEXT, 'big', null, null, null, null, 'subject');
+
+            if ($dbman->field_exists($table, $summaryfield)) {
+                $dbman->change_field_notnull($table, $summaryfield);
+            }
+
+        }
+
+        // Fix discrepancies in content field after upgrade from 1.9
+        if (array_key_exists('content', $columns) && $columns['content']->not_null != false) {
+            $table = new xmldb_table('post');
+            $contentfield = new xmldb_field('content', XMLDB_TYPE_TEXT, 'big', null, null, null, null, 'summary');
+
+            if ($dbman->field_exists($table, $contentfield)) {
+                $dbman->change_field_notnull($table, $contentfield);
+            }
+
+        }
+
+        upgrade_main_savepoint(true, 2011070104.09);
+    }
+
+    // The ability to backup user (private) files is out completely - MDL-29248
+    if ($oldversion < 2011070104.12) {
+        unset_config('backup_general_user_files', 'backup');
+        unset_config('backup_general_user_files_locked', 'backup');
+        unset_config('backup_auto_user_files', 'backup');
+
+        upgrade_main_savepoint(true, 2011070104.12);
+    }
+
+    if ($oldversion < 2011070105.08) {
+        require_once($CFG->libdir . '/completion/completion_criteria.php');
+        // Delete orphaned criteria which were left when modules were removed
+        if ($DB->get_dbfamily() === 'mysql') {
+            $sql = "DELETE cc FROM {course_completion_criteria} cc
+                    LEFT JOIN {course_modules} cm ON cm.id = cc.moduleinstance
+                    WHERE cm.id IS NULL AND cc.criteriatype = ".COMPLETION_CRITERIA_TYPE_ACTIVITY;
+        } else {
+            $sql = "DELETE FROM {course_completion_criteria}
+                    WHERE NOT EXISTS (
+                        SELECT 'x' FROM {course_modules}
+                        WHERE {course_modules}.id = {course_completion_criteria}.moduleinstance)
+                    AND {course_completion_criteria}.criteriatype = ".COMPLETION_CRITERIA_TYPE_ACTIVITY;
+        }
+        $DB->execute($sql);
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2011070105.08);
+    }
+
+    if ($oldversion < 2011070106.03) { // fix invalid course_completion_records MDL-27368
+        //first get all instances of duplicate records
+        $sql = 'SELECT userid, course FROM {course_completions} WHERE (deleted IS NULL OR deleted <> 1) GROUP BY userid, course HAVING (count(id) > 1)';
+        $duplicates = $DB->get_recordset_sql($sql, array());
+
+        foreach ($duplicates as $duplicate) {
+            $pointer = 0;
+            //now get all the records for this user/course
+            $sql = 'userid = ? AND course = ? AND (deleted IS NULL OR deleted <> 1)';
+            $completions = $DB->get_records_select('course_completions', $sql,
+                array($duplicate->userid, $duplicate->course), 'timecompleted DESC, timestarted DESC');
+            $needsupdate = false;
+            $origcompletion = null;
+            foreach ($completions as $completion) {
+                $pointer++;
+                if ($pointer === 1) { //keep 1st record but delete all others.
+                    $origcompletion = $completion;
+                } else {
+                    //we need to keep the "oldest" of all these fields as the valid completion record.
+                    $fieldstocheck = array('timecompleted', 'timestarted', 'timeenrolled');
+                    foreach ($fieldstocheck as $f) {
+                        if ($origcompletion->$f > $completion->$f) {
+                            $origcompletion->$f = $completion->$f;
+                            $needsupdate = true;
+                        }
+                    }
+                    $DB->delete_records('course_completions', array('id'=>$completion->id));
+                }
+            }
+            if ($needsupdate) {
+                $DB->update_record('course_completions', $origcompletion);
+            }
+        }
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true,2011070106.03);
+    }
+
     return true;
 }
-
-//TODO: Cleanup before the 2.0 release - we do not want to drag along these dev machine fixes forever
-// 1/ drop block_pinned_old table here and in install.xml
-// 2/ drop block_instance_old table here and in install.xml
-
-//TODO: AFTER 2.0 remove the column user->emailstop and the user preference "message_showmessagewindow"

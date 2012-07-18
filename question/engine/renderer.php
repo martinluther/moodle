@@ -62,8 +62,12 @@ class core_question_renderer extends plugin_renderer_base {
         $output = '';
         $output .= html_writer::start_tag('div', array(
             'id' => 'q' . $qa->get_slot(),
-            'class' => 'que ' . $qa->get_question()->qtype->name() . ' ' .
-                    $qa->get_behaviour_name(),
+            'class' => implode(' ', array(
+                'que',
+                $qa->get_question()->qtype->name(),
+                $qa->get_behaviour_name(),
+                $qa->get_state_class($options->correctness && $qa->has_marks()),
+            ))
         ));
 
         $output .= html_writer::tag('div',
@@ -73,16 +77,16 @@ class core_question_renderer extends plugin_renderer_base {
         $output .= html_writer::start_tag('div', array('class' => 'content'));
 
         $output .= html_writer::tag('div',
-                $this->add_part_heading(get_string('questiontext', 'question'),
-                $this->formulation($qa, $behaviouroutput, $qtoutput, $options)),
+                $this->add_part_heading($qtoutput->formulation_heading(),
+                    $this->formulation($qa, $behaviouroutput, $qtoutput, $options)),
                 array('class' => 'formulation'));
         $output .= html_writer::nonempty_tag('div',
                 $this->add_part_heading(get_string('feedback', 'question'),
-                $this->outcome($qa, $behaviouroutput, $qtoutput, $options)),
+                    $this->outcome($qa, $behaviouroutput, $qtoutput, $options)),
                 array('class' => 'outcome'));
         $output .= html_writer::nonempty_tag('div',
                 $this->add_part_heading(get_string('comments', 'question'),
-                $this->manual_comment($qa, $behaviouroutput, $qtoutput, $options)),
+                    $this->manual_comment($qa, $behaviouroutput, $qtoutput, $options)),
                 array('class' => 'comment'));
         $output .= html_writer::nonempty_tag('div',
                 $this->response_history($qa, $behaviouroutput, $qtoutput, $options),
@@ -203,36 +207,52 @@ class core_question_renderer extends plugin_renderer_base {
      */
     protected function question_flag(question_attempt $qa, $flagsoption) {
         global $CFG;
+
+        $divattributes = array('class' => 'questionflag');
+
         switch ($flagsoption) {
             case question_display_options::VISIBLE:
                 $flagcontent = $this->get_flag_html($qa->is_flagged());
                 break;
+
             case question_display_options::EDITABLE:
                 $id = $qa->get_flag_field_name();
-                if ($qa->is_flagged()) {
-                    $checked = 'checked="checked" ';
-                } else {
-                    $checked = '';
-                }
-                $postdata = question_flags::get_postdata($qa);
                 // The checkbox id must be different from any element name, because
                 // of a stupid IE bug:
                 // http://www.456bereastreet.com/archive/200802/beware_of_id_and_name_attribute_mixups_when_using_getelementbyid_in_internet_explorer/
-                $flagcontent = '<input type="hidden" name="' . $id . '" value="0" />' .
-                        '<input type="checkbox" id="' . $id . 'checkbox" name="' . $id .
-                                '" value="1" ' . $checked . ' />' .
-                        '<input type="hidden" value="' . s($postdata) .
-                                '" class="questionflagpostdata" />' .
-                        '<label id="' . $id . 'label" for="' . $id . 'checkbox">' .
-                                $this->get_flag_html($qa->is_flagged(), $id . 'img') .
-                                '</label>' . "\n";
+                $checkboxattributes = array(
+                    'type' => 'checkbox',
+                    'id' => $id . 'checkbox',
+                    'name' => $id,
+                    'value' => 1,
+                );
+                if ($qa->is_flagged()) {
+                    $checkboxattributes['checked'] = 'checked';
+                }
+                $postdata = question_flags::get_postdata($qa);
+
+                $flagcontent = html_writer::empty_tag('input',
+                                array('type' => 'hidden', 'name' => $id, 'value' => 0)) .
+                        html_writer::empty_tag('input', $checkboxattributes) .
+                        html_writer::empty_tag('input',
+                                array('type' => 'hidden', 'value' => $postdata, 'class' => 'questionflagpostdata')) .
+                        html_writer::tag('label', $this->get_flag_html($qa->is_flagged(), $id . 'img'),
+                                array('id' => $id . 'label', 'for' => $id . 'checkbox')) . "\n";
+
+                $divattributes = array(
+                    'class' => 'questionflag editable',
+                    'aria-atomic' => 'true',
+                    'aria-relevant' => 'text',
+                    'aria-live' => 'assertive',
+                );
+
                 break;
+
             default:
                 $flagcontent = '';
         }
-        if ($flagcontent) {
-            return '<div class="questionflag">' . $flagcontent . "</div>\n";
-        }
+
+        return html_writer::nonempty_tag('div', $flagcontent, $divattributes);
     }
 
     /**
@@ -367,6 +387,7 @@ class core_question_renderer extends plugin_renderer_base {
 
         foreach ($qa->get_full_step_iterator() as $i => $step) {
             $stepno = $i + 1;
+
             $rowclass = '';
             if ($stepno == $qa->get_num_steps()) {
                 $rowclass = 'current';
@@ -378,13 +399,16 @@ class core_question_renderer extends plugin_renderer_base {
                                 array('width' => 450, 'height' => 650)),
                         array('title' => get_string('reviewresponse', 'question')));
             }
+
+            $restrictedqa = new question_attempt_with_restricted_history($qa, $i, null);
+
             $user = new stdClass();
             $user->id = $step->get_user_id();
             $row = array(
                 $stepno,
                 userdate($step->get_timecreated(), get_string('strftimedatetimeshort')),
                 s($qa->summarise_action($step)),
-                $step->get_state()->default_string(true),
+                $restrictedqa->get_state_string($options->correctness),
             );
 
             if ($options->marks >= question_display_options::MARK_AND_MAX) {

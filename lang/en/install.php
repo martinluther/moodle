@@ -153,6 +153,7 @@ $string['databasetypesub'] = 'Moodle supports several types of database servers.
 $string['databaseuser'] = 'Database user';
 $string['dataroot'] = 'Data directory';
 $string['datarooterror'] = 'The \'data directory\' you specified could not be found or created.  Either correct the path or create that directory manually.';
+$string['datarootpermission'] = 'Data directories permission';
 $string['datarootpublicerror'] = 'The \'data directory\' you specified is directly accessible via web, you must use different directory.';
 $string['dbconnectionerror'] = 'We could not connect to the database you specified. Please check your database settings.';
 $string['dbcreationerror'] = 'Database creation error. Could not create the given database name with the settings provided';
@@ -353,6 +354,8 @@ $string['skipdbencodingtest'] = 'Skip DB encoding test';
 $string['nativesqlsrv'] = 'SQL*Server Microsoft (native/sqlsrv)';
 $string['nativesqlsrvhelp'] = 'Now you need to configure the database where most Moodle data will be stored.
 This database must already have been created and a username and password created to access it. Table prefix is mandatory.';
+$string['nativesqlsrvnodriver'] = 'Microsoft Drivers for SQL Server for PHP are not installed or not configured properly.';
+$string['nativesqlsrvnonwindows'] = 'Microsoft Drivers for SQL Server for PHP are available only for Windows OS.';
 $string['sqliteextensionisnotpresentinphp'] = 'PHP has not been properly configured with the SQLite extension.  Please check your php.ini file or recompile PHP.';
 $string['upgradingqtypeplugin'] = 'Upgrading question/type plugin';
 $string['welcomep10'] = '{$a->installername} ({$a->installerversion})';

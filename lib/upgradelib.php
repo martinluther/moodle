@@ -114,6 +114,12 @@ class plugin_defective_exception extends moodle_exception {
 function upgrade_main_savepoint($result, $version, $allowabort=true) {
     global $CFG;
 
+    //sanity check to avoid confusion with upgrade_mod_savepoint usage.
+    if (!is_bool($allowabort)) {
+        $errormessage = 'Parameter type mismatch. Are you mixing up upgrade_main_savepoint() and upgrade_mod_savepoint()?';
+        throw new coding_exception($errormessage);
+    }
+
     if (!$result) {
         throw new upgrade_exception(null, $version);
     }
@@ -466,6 +472,10 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
             }
         }
 
+        if (empty($module->cron)) {
+            $module->cron = 0;
+        }
+
         // all modules must have en lang pack
         if (!is_readable("$fullmod/lang/en/$mod.php")) {
             throw new plugin_defective_exception($component, 'Missing mandatory en language pack.');
@@ -509,7 +519,7 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
                 require_once("$fullmod/db/install.php");
                 // Set installation running flag, we need to recover after exception or error
                 set_config('installrunning', 1, $module->name);
-                $post_install_function = 'xmldb_'.$module->name.'_install';;
+                $post_install_function = 'xmldb_'.$module->name.'_install';
                 $post_install_function();
                 unset_config('installrunning', $module->name);
             }
@@ -543,7 +553,12 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
                 upgrade_mod_savepoint($result, $module->version, $mod, false);
             }
 
-        /// Upgrade various components
+            // update cron flag if needed
+            if ($currmodule->cron != $module->cron) {
+                $DB->set_field('modules', 'cron', $module->cron, array('name' => $module->name));
+            }
+
+            // Upgrade various components
             update_capabilities($component);
             log_update_descriptions($component);
             external_update_descriptions($component);
@@ -826,11 +841,12 @@ function log_update_descriptions($component) {
  * @return void
  */
 function external_update_descriptions($component) {
-    global $DB;
+    global $DB, $CFG;
 
     $defpath = get_component_directory($component).'/db/services.php';
 
     if (!file_exists($defpath)) {
+        require_once($CFG->dirroot.'/lib/externallib.php');
         external_delete_descriptions($component);
         return;
     }
@@ -894,6 +910,7 @@ function external_update_descriptions($component) {
     $dbservices = $DB->get_records('external_services', array('component'=>$component));
     foreach ($dbservices as $dbservice) {
         if (empty($services[$dbservice->name])) {
+            $DB->delete_records('external_tokens', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services_functions', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services_users', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services', array('id'=>$dbservice->id));
@@ -979,22 +996,6 @@ function external_update_descriptions($component) {
             $DB->insert_record('external_services_functions', $newf);
         }
     }
-}
-
-/**
- * Delete all service and external functions information defined in the specified component.
- * @param string $component name of component (moodle, mod_assignment, etc.)
- * @return void
- */
-function external_delete_descriptions($component) {
-    global $DB;
-
-    $params = array($component);
-
-    $DB->delete_records_select('external_services_users', "externalserviceid IN (SELECT id FROM {external_services} WHERE component = ?)", $params);
-    $DB->delete_records_select('external_services_functions', "externalserviceid IN (SELECT id FROM {external_services} WHERE component = ?)", $params);
-    $DB->delete_records('external_services', array('component'=>$component));
-    $DB->delete_records('external_functions', array('component'=>$component));
 }
 
 /**

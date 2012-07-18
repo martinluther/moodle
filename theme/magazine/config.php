@@ -9,9 +9,8 @@ $THEME->name = 'magazine';
 // the directory in which this file resides.
 ////////////////////////////////////////////////////
 
+$THEME->parents = array('canvas','base');
 
-$THEME->parents = array('base','canvas');
-$THEME->parents_exclude_sheets = array('base'=>array('pagelayout'),'canvas'=>array('pagelayout') );
 /////////////////////////////////////////////////////
 // Which existing theme(s) in the /theme/ directory
 // do you want this theme to extend. A theme can
@@ -22,7 +21,6 @@ $THEME->parents_exclude_sheets = array('base'=>array('pagelayout'),'canvas'=>arr
 // changes you want to your theme.
 ////////////////////////////////////////////////////
 
-
 $THEME->sheets = array('layout','core','colors','css3');
 
 ////////////////////////////////////////////////////
@@ -30,6 +28,12 @@ $THEME->sheets = array('layout','core','colors','css3');
 // this theme's /styles/ directory.
 ////////////////////////////////////////////////////
 
+$THEME->parents_exclude_sheets = array('base'=>array('pagelayout'),'canvas'=>array('pagelayout') );
+
+////////////////////////////////////////////////////
+// An array of stylesheets not to inherit from the
+// themes parents
+////////////////////////////////////////////////////
 
 $THEME->enable_dock = true;
 
@@ -45,12 +49,13 @@ $THEME->editor_sheets = array('editor');
 ////////////////////////////////////////////////////
 
 $THEME->layouts = array(
+    // Most backwards compatible layout without the blocks - this is the layout used by default
     'base' => array(
         'file' => 'general.php',
-        'regions' => array('side-pre', 'side-post'),
-        'defaultregion' => 'side-post',
+        'regions' => array(),
     ),
-    'general' => array(
+    // Standard layout with blocks, this is recommended for most pages with general information
+    'standard' => array(
         'file' => 'general.php',
         'regions' => array('side-pre', 'side-post'),
         'defaultregion' => 'side-post',
@@ -137,7 +142,8 @@ $THEME->layouts = array(
 // if you want to add a different layout template to a
 // specific page.
 ///////////////////////////////////////////////////////////////
-//$THEME->csspostprocess = 'simplespace_process_css';
+
+$THEME->csspostprocess = 'magazine_process_css';
 
 ////////////////////////////////////////////////////
 // Allows the user to provide the name of a function
@@ -159,23 +165,17 @@ $THEME->layouts = array(
 // As above but will be included in the page footer.
 ////////////////////////////////////////////////////
 
-//$THEME->larrow = "&#60";
+// $THEME->larrow = "&#60";
 
 ////////////////////////////////////////////////////
 // Overrides the left arrow image used throughout
 // Moodle
 ////////////////////////////////////////////////////
 
- //$THEME->rarrow = "&#62";
+// $THEME->rarrow = "&#62";
 
 ////////////////////////////////////////////////////
 // Overrides the right arrow image used throughout Moodle
-////////////////////////////////////////////////////
-
-// $THEME->layouts
-
-////////////////////////////////////////////////////
-// An array setting the layouts for the theme
 ////////////////////////////////////////////////////
 
 // $THEME->parents_exclude_javascripts
@@ -183,13 +183,6 @@ $THEME->layouts = array(
 ////////////////////////////////////////////////////
 // An array of JavaScript files NOT to inherit from
 // the themes parents
-////////////////////////////////////////////////////
-
-// $THEME->parents_exclude_sheets
-
-////////////////////////////////////////////////////
-// An array of stylesheets not to inherit from the
-// themes parents
 ////////////////////////////////////////////////////
 
 // $THEME->plugins_exclude_sheets
@@ -200,10 +193,8 @@ $THEME->layouts = array(
 ////////////////////////////////////////////////////
 
 // $THEME->rendererfactory
-//$THEME->rendererfactory = 'theme_simplespace_renderer_factory';
+
 ////////////////////////////////////////////////////
 // Sets a custom render factory to use with the
 // theme, used when working with custom renderers.
 ////////////////////////////////////////////////////
-
-$THEME->csspostprocess = 'magazine_process_css';

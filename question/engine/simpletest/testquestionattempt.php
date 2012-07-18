@@ -47,7 +47,7 @@ class question_attempt_test extends UnitTestCase {
     private $qa;
 
     public function setUp() {
-        $this->question = test_question_maker::make_a_description_question();
+        $this->question = test_question_maker::make_question('description');
         $this->question->defaultmark = 3;
         $this->usageid = 13;
         $this->qa = new question_attempt($this->question, $this->usageid);
@@ -70,8 +70,8 @@ class question_attempt_test extends UnitTestCase {
         $this->assertEqual(2, $qa->get_max_mark());
     }
 
-    public function test_get_set_number_in_usage() {
-        $this->qa->set_number_in_usage(7);
+    public function test_get_set_slot() {
+        $this->qa->set_slot(7);
         $this->assertEqual(7, $this->qa->get_slot());
     }
 
@@ -97,7 +97,7 @@ class question_attempt_test extends UnitTestCase {
     }
 
     public function test_get_field_prefix() {
-        $this->qa->set_number_in_usage(7);
+        $this->qa->set_slot(7);
         $name = $this->qa->get_field_prefix();
         $this->assertPattern('/' . preg_quote($this->usageid) . '/', $name);
         $this->assertPattern('/' . preg_quote($this->qa->get_slot()) . '/', $name);
@@ -123,6 +123,16 @@ class question_attempt_test extends UnitTestCase {
                 'name', question_attempt::PARAM_MARK, array('name' => '123')));
     }
 
+    public function test_get_submitted_var_param_mark_number_uk_decimal() {
+        $this->assertIdentical(123.45, $this->qa->get_submitted_var(
+                'name', question_attempt::PARAM_MARK, array('name' => '123.45')));
+    }
+
+    public function test_get_submitted_var_param_mark_number_eu_decimal() {
+        $this->assertIdentical(123.45, $this->qa->get_submitted_var(
+                'name', question_attempt::PARAM_MARK, array('name' => '123,45')));
+    }
+
     public function test_get_submitted_var_param_mark_invalid() {
         $this->assertIdentical(0.0, $this->qa->get_submitted_var(
                 'name', question_attempt::PARAM_MARK, array('name' => 'frog')));
@@ -141,7 +151,7 @@ class question_attempt_with_steps_test extends UnitTestCase {
     private $qa;
 
     public function setUp() {
-        $this->question = test_question_maker::make_a_description_question();
+        $this->question = test_question_maker::make_question('description');
         $this->qa = new testable_question_attempt($this->question, 0, null, 2);
         for ($i = 0; $i < 3; $i++) {
             $step = new question_attempt_step(array('i' => $i));

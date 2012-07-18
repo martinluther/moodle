@@ -69,8 +69,10 @@ class restore_course_task extends restore_task {
         // Restore course role assignments and overrides (internally will observe the role_assignments setting)
         $this->add_step(new restore_ras_and_caps_structure_step('course_ras_and_caps', 'roles.xml'));
 
-        // Restore course enrolments (plugins and membership)
-        $this->add_step(new restore_enrolments_structure_step('course_enrolments', 'enrolments.xml'));
+        // Restore course enrolments (plugins and membership). Conditionally prevented for any IMPORT/HUB operation
+        if ($this->plan->get_mode() != backup::MODE_IMPORT && $this->plan->get_mode() != backup::MODE_HUB) {
+            $this->add_step(new restore_enrolments_structure_step('course_enrolments', 'enrolments.xml'));
+        }
 
         // Restore course filters (conditionally)
         if ($this->get_setting_value('filters')) {
@@ -80,6 +82,11 @@ class restore_course_task extends restore_task {
         // Restore course comments (conditionally)
         if ($this->get_setting_value('comments')) {
             $this->add_step(new restore_comments_structure_step('course_comments', 'comments.xml'));
+        }
+
+        // Calendar events (conditionally)
+        if ($this->get_setting_value('calendarevents')) {
+            $this->add_step(new restore_calendarevents_structure_step('course_calendar', 'calendar.xml'));
         }
 
         // At the end, mark it as built

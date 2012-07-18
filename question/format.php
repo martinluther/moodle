@@ -103,6 +103,20 @@ class qformat_default {
         return '.txt';
     }
 
+    /**
+     * Check if the given file is capable of being imported by this plugin.
+     *
+     * Note that expensive or detailed integrity checks on the file should
+     * not be performed by this method. Simple file type or magic-number tests
+     * would be suitable.
+     *
+     * @param stored_file $file the file to check
+     * @return bool whether this plugin can import the file
+     */
+    public function can_import_file($file) {
+        return ($file->get_mimetype() == $this->mime_type());
+    }
+
     // Accessor methods
 
     /**
@@ -114,6 +128,7 @@ class qformat_default {
             debugging('You shouldn\'t call setCategory after setQuestions');
         }
         $this->category = $category;
+        $this->importcontext = get_context_instance_by_id($this->category->contextid);
     }
 
     /**
@@ -297,9 +312,6 @@ class qformat_default {
     public function importprocess($category) {
         global $USER, $CFG, $DB, $OUTPUT;
 
-        $context = $category->context;
-        $this->importcontext = $context;
-
         // reset the timer in case file upload was slow
         set_time_limit(0);
 
@@ -311,7 +323,7 @@ class qformat_default {
             return false;
         }
 
-        if (!$questions = $this->readquestions($lines, $context)) {   // Extract all the questions
+        if (!$questions = $this->readquestions($lines)) {   // Extract all the questions
             echo $OUTPUT->notification(get_string('noquestionsinfile', 'question'));
             return false;
         }
@@ -383,7 +395,7 @@ class qformat_default {
                 }
                 continue;
             }
-            $question->context = $context;
+            $question->context = $this->importcontext;
 
             $count++;
 
@@ -394,18 +406,20 @@ class qformat_default {
 
             $question->createdby = $USER->id;
             $question->timecreated = time();
+            $question->modifiedby = $USER->id;
+            $question->timemodified = time();
 
             $question->id = $DB->insert_record('question', $question);
             if (isset($question->questiontextfiles)) {
                 foreach ($question->questiontextfiles as $file) {
                     question_bank::get_qtype($question->qtype)->import_file(
-                            $context, 'question', 'questiontext', $question->id, $file);
+                            $this->importcontext, 'question', 'questiontext', $question->id, $file);
                 }
             }
             if (isset($question->generalfeedbackfiles)) {
                 foreach ($question->generalfeedbackfiles as $file) {
                     question_bank::get_qtype($question->qtype)->import_file(
-                            $context, 'question', 'generalfeedback', $question->id, $file);
+                            $this->importcontext, 'question', 'generalfeedback', $question->id, $file);
                 }
             }
 
@@ -491,6 +505,7 @@ class qformat_default {
         } else {
             $context = get_context_instance_by_id($this->category->contextid);
         }
+        $this->importcontext = $context;
 
         // Now create any categories that need to be created.
         foreach ($catnames as $catname) {
@@ -524,7 +539,10 @@ class qformat_default {
         if (is_readable($filename)) {
             $filearray = file($filename);
 
-            /// Check for Macintosh OS line returns (ie file on one line), and fix
+            // If the first line of the file starts with a UTF-8 BOM, remove it.
+            $filearray[0] = textlib_get_instance()->trim_utf8_bom($filearray[0]);
+
+            // Check for Macintosh OS line returns (ie file on one line), and fix.
             if (preg_match("~\r~", $filearray[0]) AND !preg_match("~\n~", $filearray[0])) {
                 return explode("\r", $filearray[0]);
             } else {
@@ -540,14 +558,19 @@ class qformat_default {
      * readquestion().   Questions are defined as anything
      * between blank lines.
      *
+     * NOTE this method used to take $context as a second argument. However, at
+     * the point where this method was called, it was impossible to know what
+     * context the quetsions were going to be saved into, so the value could be
+     * wrong. Also, none of the standard question formats were using this argument,
+     * so it was removed. See MDL-32220.
+     *
      * If your format does not use blank lines as a delimiter
      * then you will need to override this method. Even then
      * try to use readquestion for each question
      * @param array lines array of lines from readdata
-     * @param object $context
      * @return array array of question objects
      */
-    protected function readquestions($lines, $context) {
+    protected function readquestions($lines) {
 
         $questions = array();
         $currentquestion = array();
@@ -567,7 +590,7 @@ class qformat_default {
         }
 
         if (!empty($currentquestion)) {  // There may be a final question
-            if ($question = $this->readquestion($currentquestion, $context)) {
+            if ($question = $this->readquestion($currentquestion)) {
                 $questions[] = $question;
             }
         }
@@ -595,7 +618,9 @@ class qformat_default {
         $question->image = "";
         $question->usecase = 0;
         $question->multiplier = array();
+        $question->questiontextformat = FORMAT_MOODLE;
         $question->generalfeedback = '';
+        $question->generalfeedbackformat = FORMAT_MOODLE;
         $question->correctfeedback = '';
         $question->partiallycorrectfeedback = '';
         $question->incorrectfeedback = '';
@@ -871,27 +896,5 @@ class qformat_default {
         $formatoptions->noclean = true;
         return html_to_text(format_text($question->questiontext,
                 $question->questiontextformat, $formatoptions), 0, false);
-    }
-
-    /**
-     * convert files into text output in the given format.
-     * @param array
-     * @param string encoding method
-     * @return string $string
-     */
-    protected function writefiles($files, $encoding='base64') {
-        if (empty($files)) {
-            return '';
-        }
-        $string = '';
-        foreach ($files as $file) {
-            if ($file->is_directory()) {
-                continue;
-            }
-            $string .= '<file name="' . $file->get_filename() . '" encoding="' . $encoding . '">';
-            $string .= base64_encode($file->get_content());
-            $string .= '</file>';
-        }
-        return $string;
     }
 }

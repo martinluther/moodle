@@ -502,19 +502,24 @@ abstract class moodle_database {
         $where = array();
         $params = array();
 
-        $columns = $this->get_columns($table);
+        if (debugging()) {
+            $columns = $this->get_columns($table);
+            foreach ($conditions as $key=>$value) {
+                if (!isset($columns[$key])) {
+                    $a = new stdClass();
+                    $a->fieldname = $key;
+                    $a->tablename = $table;
+                    throw new dml_exception('ddlfieldnotexist', $a);
+                }
+                $column = $columns[$key];
+                if ($column->meta_type == 'X') {
+                    //ok so the column is a text column. sorry no text columns in the where clause conditions
+                    throw new dml_exception('textconditionsnotallowed', $conditions);
+                }
+            }
+        }
+
         foreach ($conditions as $key=>$value) {
-            if (!isset($columns[$key])) {
-                $a = new stdClass();
-                $a->fieldname = $key;
-                $a->tablename = $table;
-                throw new dml_exception('ddlfieldnotexist', $a);
-            }
-            $column = $columns[$key];
-            if ($column->meta_type == 'X') {
-                //ok so the column is a text column. sorry no text columns in the where clause conditions
-                throw new dml_exception('textconditionsnotallowed', $conditions);
-            }
             if (is_int($key)) {
                 throw new dml_exception('invalidnumkey');
             }
@@ -742,6 +747,11 @@ abstract class moodle_database {
                 if (!array_key_exists($key, $params)) {
                     throw new dml_exception('missingkeyinsql', $key, '');
                 }
+                if (strlen($key) > 30) {
+                    throw new coding_exception(
+                            "Placeholder names must be 30 characters or shorter. '" .
+                            $key . "' is too long.", $sql);
+                }
                 $finalparams[$key] = $params[$key];
             }
             if ($count != count($finalparams)) {
@@ -915,7 +925,7 @@ abstract class moodle_database {
 
     /**
      * Execute general sql query. Should be used only when no other method suitable.
-     * Do NOT use this to make changes in db structure, use database_manager::execute_sql() instead!
+     * Do NOT use this to make changes in db structure, use database_manager methods instead!
      * @param string $sql query
      * @param array $params query parameters
      * @return bool true
@@ -1590,7 +1600,9 @@ abstract class moodle_database {
      * @throws dml_exception if error
      */
     public function delete_records($table, array $conditions=null) {
-        if (is_null($conditions)) {
+        // truncate is drop/create (DDL), not transactional safe,
+        // so we don't use the shortcut within them. MDL-29198
+        if (is_null($conditions) && empty($this->transactions)) {
             return $this->execute("TRUNCATE TABLE {".$table."}");
         }
         list($select, $params) = $this->where_clause($table, $conditions);
@@ -2192,9 +2204,10 @@ abstract class moodle_database {
     /**
      * Obtain session lock
      * @param int $rowid id of the row with session record
+     * @param int $timeout max allowed time to wait for the lock in seconds
      * @return bool success
      */
-    public function get_session_lock($rowid) {
+    public function get_session_lock($rowid, $timeout) {
         $this->used_for_db_sessions = true;
     }
 

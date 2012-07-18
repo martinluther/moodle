@@ -105,7 +105,7 @@ class page_requirements_manager {
     protected $yui2loader;
     /** YUI PHPLoader instance responsible for YUI3 loading from PHP only */
     protected $yui3loader;
-    /** YUI PHPLoader instance responsible for YUI3 loading from javascript */
+    /** YUI loader information for YUI3 loading from javascript */
     protected $M_yui_loader;
     /** some config vars exposed in JS, please no secret stuff there */
     protected $M_cfg;
@@ -120,13 +120,14 @@ class page_requirements_manager {
 
         require_once("$CFG->libdir/yui/phploader/phploader/loader.php");
 
-        $this->yui3loader = new YAHOO_util_Loader($CFG->yui3version);
+        $this->yui3loader = new stdClass();
         $this->yui2loader = new YAHOO_util_Loader($CFG->yui2version);
 
         // set up some loader options
         if (debugging('', DEBUG_DEVELOPER)) {
-            $this->yui3loader->filter = YUI_DEBUG; // alternatively we could use just YUI_RAW here
-            $this->yui2loader->filter = YUI_DEBUG; // alternatively we could use just YUI_RAW here
+            $this->yui3loader->filter = YUI_RAW; // for more detailed logging info use YUI_DEBUG here
+            $this->yui2loader->filter = YUI_RAW; // for more detailed logging info use YUI_DEBUG here
+            $this->yui2loader->allowRollups = false;
         } else {
             $this->yui3loader->filter = null;
             $this->yui2loader->filter = null;
@@ -160,7 +161,7 @@ class page_requirements_manager {
         $this->M_yui_loader->base         = $this->yui3loader->base;
         $this->M_yui_loader->comboBase    = $this->yui3loader->comboBase;
         $this->M_yui_loader->combine      = $this->yui3loader->combine;
-        $this->M_yui_loader->filter       = ($this->yui3loader->filter == YUI_DEBUG) ? 'debug' : '';
+        $this->M_yui_loader->filter       = (string)$this->yui3loader->filter;
         $this->M_yui_loader->insertBefore = 'firstthemesheet';
         $this->M_yui_loader->modules      = array();
         $this->M_yui_loader->groups       = array(
@@ -201,11 +202,6 @@ class page_requirements_manager {
         $this->js_module($this->find_module('core_filepicker'));
         $this->js_module($this->find_module('core_dock'));
 
-        // YUI3 init code
-        $libs = array('cssreset', 'cssbase', 'cssfonts', 'cssgrids', 'node', 'loader'); // full CSS reset + basic libs
-        foreach ($libs as $lib) {
-            $this->yui3loader->load($lib);
-        }
     }
 
     /**
@@ -412,7 +408,7 @@ class page_requirements_manager {
                                                         array('saving', 'repository'), array('search', 'repository'), array('searching', 'repository'), array('size', 'repository'),
                                                         array('submit', 'repository'), array('sync', 'repository'), array('title', 'repository'), array('upload', 'repository'),
                                                         array('uploading', 'repository'), array('xhtmlerror', 'repository'),
-                                                        array('cancel'), array('chooselicense', 'repository'), array('author', 'repository'),
+                                                        array('cancel'), array('chooselicense', 'repository'), array('author', 'repository'),array('next', 'moodle'),
                                                         array('ok', 'moodle'), array('error', 'moodle'), array('info', 'moodle'), array('norepositoriesavailable', 'repository'), array('norepositoriesexternalavailable', 'repository'),
                                                         array('nofilesattached', 'repository'), array('filepicker', 'repository'),
                                                         array('nofilesavailable', 'repository'), array('overwrite', 'repository'),
@@ -717,7 +713,7 @@ class page_requirements_manager {
         if (!is_array($modules)) {
             $modules = array($modules);
         }
-        if (empty($CFG->useexternalyui) || true) {
+        if (empty($CFG->useexternalyui)) {
             // We need to set the M.yui.galleryversion to the correct version
             $jscode = 'M.yui.galleryversion='.json_encode($galleryversion).';';
         } else {
@@ -965,10 +961,33 @@ class page_requirements_manager {
      * @return string
      */
     protected function get_yui3lib_headcode() {
-        $code = $this->yui3loader->tags();
-        // unfortunately yui loader does not produce xhtml strict code, so let's fix it for now
-        $code = str_replace('&amp;', '&', $code);
-        $code = str_replace('&', '&amp;', $code);
+        global $CFG;
+
+        $code = '';
+
+        if ($this->yui3loader->combine) {
+            $code .= '<link rel="stylesheet" type="text/css" href="'.$this->yui3loader->comboBase
+                     .$CFG->yui3version.'/build/cssreset/reset-min.css&amp;'
+                     .$CFG->yui3version.'/build/cssfonts/fonts-min.css&amp;'
+                     .$CFG->yui3version.'/build/cssgrids/grids-min.css&amp;'
+                     .$CFG->yui3version.'/build/cssbase/base-min.css" />';
+        } else {
+            $code .= '<link rel="stylesheet" type="text/css" href="'.$this->yui3loader->base.'cssreset/reset-min.css" />';
+            $code .= '<link rel="stylesheet" type="text/css" href="'.$this->yui3loader->base.'cssfonts/fonts-min.css" />';
+            $code .= '<link rel="stylesheet" type="text/css" href="'.$this->yui3loader->base.'cssgrids/grids-min.css" />';
+            $code .= '<link rel="stylesheet" type="text/css" href="'.$this->yui3loader->base.'cssbase/base-min.css" />';
+        }
+
+        $code .= '<script type="text/javascript" src="'.$this->yui3loader->base.'yui/yui-min.js"></script>';
+
+        if ($this->yui3loader->filter === YUI_RAW) {
+            $code = str_replace('-min.css', '.css', $code);
+            $code = str_replace('-min.js', '.js', $code);
+        } else if ($this->yui3loader->filter === YUI_DEBUG) {
+            $code = str_replace('-min.css', '.css', $code);
+            $code = str_replace('-min.js', '-debug.js', $code);
+        }
+
         return $code;
     }
 

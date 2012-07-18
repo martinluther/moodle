@@ -90,7 +90,12 @@ class quiz {
         if ($getcontext && !empty($cm->id)) {
             $this->context = get_context_instance(CONTEXT_MODULE, $cm->id);
         }
-        $this->questionids = explode(',', quiz_questions_in_quiz($this->quiz->questions));
+        $questionids = quiz_questions_in_quiz($this->quiz->questions);
+        if ($questionids) {
+            $this->questionids = explode(',', quiz_questions_in_quiz($this->quiz->questions));
+        } else {
+            $this->questionids = array(); // Which idiot made explode(',', '') = array('')?
+        }
     }
 
     /**
@@ -1084,7 +1089,7 @@ class quiz_attempt {
         $DB->update_record('quiz_attempts', $this->attempt);
 
         if (!$this->is_preview()) {
-            quiz_save_best_grade($this->get_quiz());
+            quiz_save_best_grade($this->get_quiz(), $this->attempt->userid);
 
             // Trigger event
             $eventdata = new stdClass();
@@ -1236,7 +1241,7 @@ abstract class quiz_nav_panel_base {
             if (!$showcorrectness && $button->stateclass == 'notanswered') {
                 $button->stateclass = 'complete';
             }
-            $button->statestring = $qa->get_state_string($showcorrectness);
+            $button->statestring = $this->get_state_string($qa, $showcorrectness);
             $button->currentpage = $qa->get_question()->_page == $this->page;
             $button->flagged     = $qa->is_flagged();
             $button->url         = $this->get_question_url($slot);
@@ -1244,6 +1249,19 @@ abstract class quiz_nav_panel_base {
         }
 
         return $buttons;
+    }
+
+    protected function get_state_string(question_attempt $qa, $showcorrectness) {
+        if ($qa->get_question()->length > 0)  {
+            return $qa->get_state_string($showcorrectness);
+        }
+
+        // Special case handling for 'information' items.
+        if ($qa->get_state() == question_state::$todo) {
+            return get_string('notyetviewed', 'quiz');
+        } else {
+            return get_string('viewed', 'quiz');
+        }
     }
 
     public function render_before_button_bits(mod_quiz_renderer $output) {

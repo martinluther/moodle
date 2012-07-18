@@ -320,7 +320,7 @@ function wiki_refresh_page_links($page, $links) {
  * @param int $userid
  */
 function wiki_create_page($swid, $title, $format, $userid) {
-    global $DB, $PAGE;
+    global $DB;
     $subwiki = wiki_get_subwiki($swid);
     $cm = get_coursemodule_from_instance('wiki', $subwiki->wikiid);
     $context = get_context_instance(CONTEXT_MODULE, $cm->id);
@@ -490,7 +490,7 @@ function wiki_get_orphaned_pages($swid) {
             AND s.id = ?
             AND w.id = s.wikiid
             AND p.title != w.firstpagetitle
-            AND p.id NOT IN (SELECT topageid FROM {wiki_links} WHERE subwikiid = ?);";
+            AND p.id NOT IN (SELECT topageid FROM {wiki_links} WHERE subwikiid = ?)";
 
     return $DB->get_records_sql($sql, array($swid, $swid, $swid));
 }
@@ -605,10 +605,12 @@ function wiki_parse_content($markup, $pagecontent, $options = array()) {
  *
  * NOTE: Empty pages and non-existent pages must be print in red color.
  *
- * @param link name of a page
- * @param $options
+ * !!!!!! IMPORTANT !!!!!!
+ * It is critical that you call format_string on the content before it is used.
  *
- * @return
+ * @param string|page_wiki $link name of a page
+ * @param array $options
+ * @return array Array('content' => string, 'url' => string, 'new' => bool, 'link_info' => array)
  *
  * @TODO Doc return and options
  */
@@ -899,7 +901,7 @@ function wiki_user_can_edit($subwiki) {
             // There is one wiki per group.
             //
             // Only members of subwiki group could edit that wiki
-            if ($subwiki->groupid == groups_get_activity_group($cm)) {
+            if (groups_is_member($subwiki->groupid)) {
                 // Only edit capability needed
                 return has_capability('mod/wiki:editpage', $context);
             } else { // User is not part of that group
@@ -1016,6 +1018,136 @@ function wiki_delete_old_locks() {
     global $DB;
 
     $DB->delete_records_select('wiki_locks', "lockedat < ?", array(time() - 3600));
+}
+
+/**
+ * Deletes wiki_links. It can be sepecific link or links attached in subwiki
+ *
+ * @global mixed $DB database object
+ * @param int $linkid id of the link to be deleted
+ * @param int $topageid links to the specific page
+ * @param int $frompageid links from specific page
+ * @param int $subwikiid links to subwiki
+ */
+function wiki_delete_links($linkid = null, $topageid = null, $frompageid = null, $subwikiid = null) {
+    global $DB;
+    $params = array();
+
+    // if link id is givien then don't check for anything else
+    if (!empty($linkid)) {
+        $params['id'] = $linkid;
+    } else {
+        if (!empty($topageid)) {
+            $params['topageid'] = $topageid;
+        }
+        if (!empty($frompageid)) {
+            $params['frompageid'] = $frompageid;
+        }
+        if (!empty($subwikiid)) {
+            $params['subwikiid'] = $subwikiid;
+        }
+    }
+
+    //Delete links if any params are passed, else nothing to delete.
+    if (!empty($params)) {
+        $DB->delete_records('wiki_links', $params);
+    }
+}
+
+/**
+ * Delete wiki synonyms related to subwikiid or page
+ *
+ * @param int $subwikiid id of sunbwiki
+ * @param int $pageid id of page
+ */
+function wiki_delete_synonym($subwikiid, $pageid = null) {
+    global $DB;
+
+    $params = array('subwikiid' => $subwikiid);
+    if (!is_null($pageid)) {
+        $params['pageid'] = $pageid;
+    }
+    $DB->delete_records('wiki_synonyms', $params, IGNORE_MISSING);
+}
+
+/**
+ * Delete pages and all related data
+ *
+ * @param mixed $context context in which page needs to be deleted.
+ * @param mixed $pageids id's of pages to be deleted
+ * @param int $subwikiid id of the subwiki for which all pages should be deleted
+ */
+function wiki_delete_pages($context, $pageids = null, $subwikiid = null) {
+    global $DB;
+
+    if (!empty($pageids) && is_int($pageids)) {
+       $pageids = array($pageids);
+    } else if (!empty($subwikiid)) {
+        $pageids = wiki_get_page_list($subwikiid);
+    }
+
+    //If there is no pageid then return as we can't delete anything.
+    if (empty($pageids)) {
+        return;
+    }
+
+    /// Delete page and all it's relevent data
+    foreach ($pageids as $pageid) {
+        if (is_object($pageid)) {
+            $pageid = $pageid->id;
+        }
+
+        //Delete page comments
+        $comments = wiki_get_comments($context->id, $pageid);
+        foreach ($comments as $commentid => $commentvalue) {
+            wiki_delete_comment($commentid, $context, $pageid);
+        }
+
+        //Delete page tags
+        $tags = tag_get_tags_array('wiki_pages', $pageid);
+        foreach ($tags as $tagid => $tagvalue) {
+            tag_delete_instance('wiki_pages', $pageid, $tagid);
+        }
+
+        //Delete Synonym
+        wiki_delete_synonym($subwikiid, $pageid);
+
+        //Delete all page versions
+        wiki_delete_page_versions(array($pageid=>array(0)));
+
+        //Delete all page locks
+        wiki_delete_locks($pageid);
+
+        //Delete all page links
+        wiki_delete_links(null, $pageid);
+
+        //Delete page
+        $params = array('id' => $pageid);
+        $DB->delete_records('wiki_pages', $params);
+    }
+}
+
+/**
+ * Delete specificed versions of a page or versions created by users
+ * if version is 0 then it will remove all versions of the page
+ *
+ * @param array $deleteversions delete versions for a page
+ */
+function wiki_delete_page_versions($deleteversions) {
+    global $DB;
+
+    /// delete page-versions
+    foreach ($deleteversions as $id => $versions) {
+        foreach ($versions as $version) {
+            $params = array('pageid' => $id);
+            //If version = 0, then remove all versions of this page, else remove
+            //specified version
+            if ($version != 0) {
+                $params['version'] = $version;
+            }
+            $DB->delete_records('wiki_versions', $params, IGNORE_MISSING);
+        }
+    }
 }
 
 function wiki_get_comment($commentid){
@@ -1141,7 +1273,7 @@ function wiki_print_page_content($page, $context, $subwikiid) {
         }
     }
     $html = file_rewrite_pluginfile_urls($page->cachedcontent, 'pluginfile.php', $context->id, 'mod_wiki', 'attachments', $subwikiid);
-    $html = format_text($html, FORMAT_MOODLE, array('overflowdiv'=>true));
+    $html = format_text($html, FORMAT_MOODLE, array('overflowdiv'=>true, 'allowid'=>true));
     echo $OUTPUT->box($html);
 
     if (!empty($CFG->usetags)) {
@@ -1264,9 +1396,9 @@ function wiki_print_upload_table($context, $filearea, $fileitemid, $deleteupload
 /**
  * Generate wiki's page tree
  *
- * @param $page. A wiki page object
- * @param $node. Starting navigation_node
- * @param $keys. An array to store keys
+ * @param page_wiki $page. A wiki page object
+ * @param navigation_node $node. Starting navigation_node
+ * @param array $keys. An array to store keys
  * @return an array with all tree nodes
  */
 function wiki_build_tree($page, $node, &$keys) {
@@ -1282,6 +1414,7 @@ function wiki_build_tree($page, $node, &$keys) {
         array_push($keys, $key);
         $l = wiki_parser_link($p);
         $link = new moodle_url('/mod/wiki/view.php', array('pageid' => $p->id));
+        // navigation_node::get_content will format the title for us
         $nodeaux = $node->add($p->title, $link, null, null, null, $icon);
         if ($l['new']) {
             $nodeaux->add_class('wiki_newentry');

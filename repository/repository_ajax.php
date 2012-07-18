@@ -66,7 +66,7 @@ if (empty($_POST) && !empty($action)) {
 }
 
 if (!confirm_sesskey()) {
-    $err->error = get_string('invalidsesskey');
+    $err->error = get_string('invalidsesskey', 'error');
     die(json_encode($err));
 }
 
@@ -195,7 +195,7 @@ switch ($action) {
             // use external link
             $link = $repo->get_link($source);
             $info = array();
-            $info['filename'] = $saveas_filename;
+            $info['file'] = $saveas_filename;
             $info['type'] = 'link';
             $info['url'] = $link;
             echo json_encode($info);
@@ -205,7 +205,19 @@ switch ($action) {
             // method, so we use copy_to_area method
             // (local, user, coursefiles, recent)
             if ($repo->has_moodle_files()) {
+                // check filesize against max allowed size
+                $filesize = $repo->get_file_size($source);
+                if (empty($filesize)) {
+                    $err->error = get_string('filesizenull', 'repository');
+                    die(json_encode($err));
+                }
+                if (($maxbytes !== -1) && ($filesize > $maxbytes)) {
+                    throw new file_exception('maxbytes');
+                }
                 $fileinfo = $repo->copy_to_area($source, $itemid, $saveas_path, $saveas_filename);
+                if (!isset($fileinfo['event'])) {
+                    $fileinfo['file'] = $fileinfo['title'];
+                }
                 echo json_encode($fileinfo);
                 die;
             }
@@ -249,17 +261,8 @@ switch ($action) {
         }
         break;
     case 'upload':
-        // handle exception here instead moodle default exception handler
-        // see MDL-23407
-        try {
-            // TODO: add file scanning MDL-19380 into each plugin
-            $result = $repo->upload($saveas_filename, $maxbytes);
-            echo json_encode($result);
-        } catch (Exception $e) {
-            $err->error = $e->getMessage();
-            echo json_encode($err);
-            die;
-        }
+        $result = $repo->upload($saveas_filename, $maxbytes);
+        echo json_encode($result);
         break;
 
     case 'overwrite':
@@ -270,7 +273,8 @@ switch ($action) {
         $newfilepath = required_param('newfilepath', PARAM_PATH);
         $newfilename = required_param('newfilename', PARAM_FILE);
 
-        echo json_encode(repository::overwrite_existing_draftfile($itemid, $filepath, $filename, $newfilepath, $newfilename));
+        $info = repository::overwrite_existing_draftfile($itemid, $filepath, $filename, $newfilepath, $newfilename);
+        echo json_encode($info);
         break;
 
     case 'deletetmpfile':

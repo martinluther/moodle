@@ -126,6 +126,9 @@ class workshop_rubric_strategy implements workshop_strategy {
             $norepeats += self::ADDDIMS;
         }
 
+        // Append editor context to editor options, giving preference to existing context.
+        $this->descriptionopts = array_merge(array('context' => $this->workshop->context), $this->descriptionopts);
+
         // prepare the embeded files
         for ($i = 0; $i < $nodimensions; $i++) {
             // prepare all editor elements
@@ -415,16 +418,17 @@ class workshop_rubric_strategy implements workshop_strategy {
     protected function load_fields() {
         global $DB;
 
-        $sql = 'SELECT l.id AS lid, r.id AS rid, r.*, l.*
+        $sql = "SELECT r.id AS rid, r.sort, r.description, r.descriptionformat,
+                       l.id AS lid, l.grade, l.definition, l.definitionformat
                   FROM {workshopform_rubric} r
              LEFT JOIN {workshopform_rubric_levels} l ON (l.dimensionid = r.id)
                  WHERE r.workshopid = :workshopid
-                 ORDER BY r.sort, l.grade';
+                 ORDER BY r.sort, l.grade";
         $params = array('workshopid' => $this->workshop->id);
 
-        $records = $DB->get_records_sql($sql, $params);
+        $rs = $DB->get_recordset_sql($sql, $params);
         $fields = array();
-        foreach ($records as $record) {
+        foreach ($rs as $record) {
             if (!isset($fields[$record->rid])) {
                 $fields[$record->rid] = new stdclass();
                 $fields[$record->rid]->id = $record->rid;
@@ -441,6 +445,8 @@ class workshop_rubric_strategy implements workshop_strategy {
                 $fields[$record->rid]->levels[$record->lid]->definitionformat = $record->definitionformat;
             }
         }
+        $rs->close();
+
         return $fields;
     }
 

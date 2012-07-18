@@ -34,31 +34,37 @@
 
     redirect_if_major_upgrade_required();
 
+    $urlparams = array();
+    if (!empty($CFG->defaulthomepage) && ($CFG->defaulthomepage == HOMEPAGE_MY) && optional_param('redirect', 1, PARAM_BOOL) === 0) {
+        $urlparams['redirect'] = 0;
+    }
+    $PAGE->set_url('/', $urlparams);
+    $PAGE->set_course($SITE);
+
     if ($CFG->forcelogin) {
         require_login();
     } else {
         user_accesstime_log();
     }
 
-    $PAGE->set_url('/');
-    $PAGE->set_course($SITE);
+    $hassiteconfig = has_capability('moodle/site:config', get_context_instance(CONTEXT_SYSTEM));
 
 /// If the site is currently under maintenance, then print a message
-    if (!empty($CFG->maintenance_enabled) and !has_capability('moodle/site:config', get_context_instance(CONTEXT_SYSTEM))) {
+    if (!empty($CFG->maintenance_enabled) and !$hassiteconfig) {
         print_maintenance_message();
     }
 
-    if (has_capability('moodle/site:config', get_context_instance(CONTEXT_SYSTEM))) {
-        if (moodle_needs_upgrading()) {
-            redirect($CFG->wwwroot .'/'. $CFG->admin .'/index.php');
-        }
-    } else if (get_home_page() != HOMEPAGE_SITE) {
+    if ($hassiteconfig && moodle_needs_upgrading()) {
+        redirect($CFG->wwwroot .'/'. $CFG->admin .'/index.php');
+    }
+
+    if (get_home_page() != HOMEPAGE_SITE) {
         // Redirect logged-in users to My Moodle overview if required
         if (optional_param('setdefaulthome', false, PARAM_BOOL)) {
             set_user_preference('user_home_page_preference', HOMEPAGE_SITE);
-        } else if ($CFG->defaulthomepage == HOMEPAGE_MY && optional_param('redirect', true, PARAM_BOOL)) {
+        } else if (!empty($CFG->defaulthomepage) && ($CFG->defaulthomepage == HOMEPAGE_MY) && optional_param('redirect', 1, PARAM_BOOL) === 1) {
             redirect($CFG->wwwroot .'/my/');
-        } else if (!empty($CFG->defaulthomepage) && $CFG->defaulthomepage == HOMEPAGE_USER) {
+        } else if (!empty($CFG->defaulthomepage) && ($CFG->defaulthomepage == HOMEPAGE_USER)) {
             $PAGE->settingsnav->get('usercurrentsettings')->add(get_string('makethismyhome'), new moodle_url('/', array('setdefaulthome'=>true)), navigation_node::TYPE_SETTING);
         }
     }
@@ -156,7 +162,13 @@
                     if (! $newsforum = forum_get_course_forum($SITE->id, 'news')) {
                         print_error('cannotfindorcreateforum', 'forum');
                     }
-                    echo html_writer::tag('a', get_string('skipa', 'access', moodle_strtolower($newsforum->name)), array('href'=>'#skipsitenews', 'class'=>'skip-block'));
+
+                    // fetch news forum context for proper filtering to happen
+                    $newsforumcm = get_coursemodule_from_instance('forum', $newsforum->id, $SITE->id, false, MUST_EXIST);
+                    $newsforumcontext = get_context_instance(CONTEXT_MODULE, $newsforumcm->id, MUST_EXIST);
+
+                    $forumname = format_string($newsforum->name, true, array('context' => $newsforumcontext));
+                    echo html_writer::tag('a', get_string('skipa', 'access', moodle_strtolower(strip_tags($forumname))), array('href'=>'#skipsitenews', 'class'=>'skip-block'));
 
                     if (isloggedin()) {
                         $SESSION->fromdiscussion = $CFG->wwwroot;
@@ -168,11 +180,11 @@
                         } else {
                             $subtext = get_string('subscribe', 'forum');
                         }
-                        echo $OUTPUT->heading($newsforum->name, 2, 'headingblock header');
+                        echo $OUTPUT->heading($forumname, 2, 'headingblock header');
                         $suburl = new moodle_url('/mod/forum/subscribe.php', array('id' => $newsforum->id, 'sesskey' => sesskey()));
                         echo html_writer::tag('div', html_writer::link($suburl, $subtext), array('class' => 'subscribelink'));
                     } else {
-                        echo $OUTPUT->heading($newsforum->name, 2, 'headingblock header');
+                        echo $OUTPUT->heading($forumname, 2, 'headingblock header');
                     }
 
                     forum_print_latest_discussions($SITE, $newsforum, $SITE->newsitems, 'plain', 'p.modified DESC');
@@ -181,12 +193,12 @@
             break;
 
             case FRONTPAGECOURSELIST:
-                if (isloggedin() and !has_capability('moodle/site:config', get_context_instance(CONTEXT_SYSTEM)) and !isguestuser() and empty($CFG->disablemycourses)) {
+                if (isloggedin() and !$hassiteconfig and !isguestuser() and empty($CFG->disablemycourses)) {
                     echo html_writer::tag('a', get_string('skipa', 'access', moodle_strtolower(get_string('mycourses'))), array('href'=>'#skipmycourses', 'class'=>'skip-block'));
                     echo $OUTPUT->heading(get_string('mycourses'), 2, 'headingblock header');
                     print_my_moodle();
                     echo html_writer::tag('span', '', array('class'=>'skip-block-to', 'id'=>'skipmycourses'));
-                } else if ((!has_capability('moodle/site:config', get_context_instance(CONTEXT_SYSTEM)) and !isguestuser()) or ($DB->count_records('course') <= FRONTPAGECOURSELIMIT)) {
+                } else if ((!$hassiteconfig and !isguestuser()) or ($DB->count_records('course') <= FRONTPAGECOURSELIMIT)) {
                     // admin should not see list of courses when there are too many of them
                     echo html_writer::tag('a', get_string('skipa', 'access', moodle_strtolower(get_string('availablecourses'))), array('href'=>'#skipavailablecourses', 'class'=>'skip-block'));
                     echo $OUTPUT->heading(get_string('availablecourses'), 2, 'headingblock header');

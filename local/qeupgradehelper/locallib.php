@@ -178,7 +178,7 @@ abstract class local_qeupgradehelper_quiz_list {
             html_writer::link(new moodle_url('/course/view.php',
                     array('id' => $quizinfo->courseid)), format_string($quizinfo->shortname)),
             html_writer::link(new moodle_url('/mod/quiz/view.php',
-                    array('id' => $quizinfo->name)), format_string($quizinfo->name)),
+                    array('q' => $quizinfo->id)), format_string($quizinfo->name)),
             $quizinfo->attemptcount,
             $quizinfo->questionattempts ? $quizinfo->questionattempts : 0,
         );
@@ -658,4 +658,16 @@ function local_qeupgradehelper_load_question($questionid, $quizid) {
     $qtype->get_question_options($question);
 
     return $question;
+}
+
+function local_qeupgradehelper_get_quiz_for_upgrade() {
+    global $DB;
+
+    return $DB->get_record_sql("SELECT quiz.id
+            FROM {quiz_attempts} quiza
+            JOIN {quiz} quiz ON quiz.id = quiza.quiz
+            JOIN {course} c ON c.id = quiz.course
+            WHERE quiza.preview = 0 AND quiza.needsupgradetonewqe = 1
+            GROUP BY quiz.id, quiz.name, c.shortname, c.id
+            ORDER BY MAX(quiza.timemodified) DESC", array(), IGNORE_MULTIPLE);
 }

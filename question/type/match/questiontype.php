@@ -206,6 +206,9 @@ class qtype_match extends question_type {
             $fs->move_area_files_to_new_context($oldcontextid,
                     $newcontextid, 'qtype_match', 'subquestion', $subquestionid);
         }
+
+        $this->move_files_in_combined_feedback($questionid, $oldcontextid, $newcontextid);
+        $this->move_files_in_hints($questionid, $oldcontextid, $newcontextid);
     }
 
     protected function delete_files($questionid, $contextid) {
@@ -220,11 +223,7 @@ class qtype_match extends question_type {
             $fs->delete_area_files($contextid, 'qtype_match', 'subquestion', $subquestionid);
         }
 
-        $fs->delete_area_files($contextid, 'qtype_multichoice',
-                'correctfeedback', $questionid);
-        $fs->delete_area_files($contextid, 'qtype_multichoice',
-                'partiallycorrectfeedback', $questionid);
-        $fs->delete_area_files($contextid, 'qtype_multichoice',
-                'incorrectfeedback', $questionid);
+        $this->delete_files_in_combined_feedback($questionid, $contextid);
+        $this->delete_files_in_hints($questionid, $contextid);
     }
 }
