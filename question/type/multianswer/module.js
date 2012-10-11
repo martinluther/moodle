@@ -38,6 +38,12 @@ M.qtype_multianswer.init = function (Y, questiondiv) {
         var subqfor = subqspan.get('for').replace(':','\\:');
         var subqanswer = subqspan.next('#'+subqfor);
 
+        var feedbacktext = feedbackspan.get('text');
+        var match = feedbacktext.match(/(\d+.\d+).*(\d+.\d+)/);
+        if (match && match[1]!==match[2]) {
+            subqanswer.addClass('qtype_multianswer_incorrect_feedback');
+        }
+
         var overlay = new Y.Overlay({
             srcNode: feedbackspan,
             visible: false,
