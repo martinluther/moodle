@@ -28,23 +28,28 @@ M.qtype_multianswer = M.qtype_multianswer || {};
 
 M.qtype_multianswer.init = function (Y, questiondiv) {
     Y.one(questiondiv).all('label.subq').each(function(subqspan, i) {
-        var feedbackspan = subqspan.one('.feedbackspan');
+        var feedbackspan = subqspan.next('label.subq, .feedbackspan');
         if (!feedbackspan) {
             return;
         }
+        if (!feedbackspan.hasClass('feedbackspan')) {
+            return;
+        }
+        var subqfor = subqspan.get('for').replace(':','\\:');
+        var subqanswer = subqspan.next('#'+subqfor);
 
         var overlay = new Y.Overlay({
             srcNode: feedbackspan,
             visible: false,
             align: {
-                node: subqspan,
+                node: subqanswer,
                 points: [Y.WidgetPositionAlign.TC, Y.WidgetPositionAlign.BC]
             }
         });
         overlay.render();
 
-        Y.on('mouseover', function() { overlay.show(); }, subqspan);
-        Y.on('mouseout', function() { overlay.hide(); }, subqspan);
+        Y.on('mouseover', function() { overlay.show(); }, subqanswer);
+        Y.on('mouseout', function() { overlay.hide(); }, subqanswer);
 
         feedbackspan.removeClass('accesshide');
     });
