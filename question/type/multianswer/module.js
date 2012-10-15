@@ -27,35 +27,24 @@ M.qtype_multianswer = M.qtype_multianswer || {};
 
 
 M.qtype_multianswer.init = function (Y, questiondiv) {
-    Y.one(questiondiv).all('label.subq').each(function(subqspan, i) {
-        var feedbackspan = subqspan.next('label.subq, .feedbackspan');
+    Y.one(questiondiv).all('span.subquestion').each(function(subqspan, i) {
+        var feedbackspan = subqspan.one('.feedbackspan');
         if (!feedbackspan) {
             return;
-        }
-        if (!feedbackspan.hasClass('feedbackspan')) {
-            return;
-        }
-        var subqfor = subqspan.get('for').replace(':','\\:');
-        var subqanswer = subqspan.next('#'+subqfor);
-
-        var feedbacktext = feedbackspan.get('text');
-        var match = feedbacktext.match(/(\d+.\d+).*(\d+.\d+)/);
-        if (match && match[1]!==match[2]) {
-            subqanswer.addClass('qtype_multianswer_incorrect_feedback');
         }
 
         var overlay = new Y.Overlay({
             srcNode: feedbackspan,
             visible: false,
             align: {
-                node: subqanswer,
+                node: subqspan,
                 points: [Y.WidgetPositionAlign.TC, Y.WidgetPositionAlign.BC]
             }
         });
         overlay.render();
 
-        Y.on('mouseover', function() { overlay.show(); }, subqanswer);
-        Y.on('mouseout', function() { overlay.hide(); }, subqanswer);
+        Y.on('mouseover', function() { overlay.show(); }, subqspan);
+        Y.on('mouseout', function() { overlay.hide(); }, subqspan);
 
         feedbackspan.removeClass('accesshide');
     });
