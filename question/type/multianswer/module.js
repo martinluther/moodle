@@ -33,6 +33,15 @@ M.qtype_multianswer.init = function (Y, questiondiv) {
             return;
         }
 
+        var subqfor = subqspan.one('label.subq').get('for').replace(':','\\:');
+        var subqanswer = subqspan.one('#'+subqfor);
+
+        var feedbacktext = feedbackspan.get('text');
+        var match = feedbacktext.match(/(\d+.\d+).*(\d+.\d+)/);
+        if (match && match[1]!==match[2]) {
+            subqanswer.addClass('qtype_multianswer_incorrect_feedback');
+        }
+
         var overlay = new Y.Overlay({
             srcNode: feedbackspan,
             visible: false,
